@@ -26,15 +26,25 @@ export async function captureRegion(): Promise<Region> {
 
             const win = X.AllocID();
 
+            const screen = display.screen[0];
+            const width = screen.pixel_width;
+            const height = screen.pixel_height;
+
             X.CreateWindow(
                 win,
                 root,
-                0, 0, 1920, 1080,
+                0, 0, width, height,
                 0,
                 0,
                 0,
                 0,
-                { eventMask: x11.eventMask.PointerMotion | x11.eventMask.ButtonPress | x11.eventMask.ButtonRelease }
+                {
+                    eventMask: 
+                        x11.eventMask.PointerMotion |
+                        x11.eventMask.ButtonPress |
+                        x11.eventMask.ButtonRelease |
+                        x11.eventMask.KeyPress
+                }
             );
 
             X.MapWindow(win);
@@ -63,6 +73,13 @@ export async function captureRegion(): Promise<Region> {
                     const height = Math.abs(endY - startY);
 
                     resolve({ x, y, width, height });
+                }
+
+                if (ev.type === 2) { // KeyPress
+                    if (ev.keycode === 9) { // ESC
+                        X.DestroyWindow(win);
+                        reject('Region capture cancelled');
+                    }
                 }
             });
         });
