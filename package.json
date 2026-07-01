@@ -15,23 +15,39 @@
     "commands": [
       {
         "command": "sikuliVS.region",
-        "title": "SikuliVS: Region"
+        "title": "SikuliVS: Create Region",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "sikuliVS.capture",
+        "title": "SikuliVS: Capture Image",
+        "icon": "$(device-camera)"
+      },
+      {
+        "command": "sikuliVS.offset",
+        "title": "SikuliVS: Set Target Offset",
+        "icon": "$(target)"
+      },
+      {
+        "command": "sikuliVS.match",
+        "title": "SikuliVS: Preview Matches",
+        "icon": "$(eye)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "sikuliVS",
+          "id": "sikuliVS-sidebar",
           "title": "SikuliVS",
           "icon": "media/sikuliVS.svg"
         }
       ]
     },
     "views": {
-      "sikuliVS": [
+      "sikuliVS-sidebar": [
         {
           "id": "sikuliVS.regionView",
-          "name": "Region"
+          "name": "SikuliX Tools"
         }
       ]
     }
@@ -41,24 +57,15 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src",
-    "test": "vscode-test"
+    "lint": "eslint src"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "24.x",
     "@types/vscode": "^1.121.0",
-    "@vscode/test-cli": "^0.0.15",
-    "@vscode/test-electron": "^3.0.0",
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1"
   },
-  "overrides": {
-    "diff": "^8.0.4",
-    "serialize-javascript": "^7.0.6"
-  },
-  "dependencies": {
-    "x11": "^2.3.0"
-  }
+  "dependencies": {}
 }
