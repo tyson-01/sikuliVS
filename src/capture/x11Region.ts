@@ -30,6 +30,19 @@ export async function captureRegion(): Promise<Region> {
             const width = screen.pixel_width;
             const height = screen.pixel_height;
 
+            let cleaned = false;
+            const cleanup = () => {
+                if (cleaned) return;
+                cleaned = true;
+                X.DestroyWindow(win);
+            };
+
+            X.on('error', (err: any) => {
+                console.error('sikuliVS: X11 protocol error', err);
+                cleanup();
+                reject(err);
+            });
+
             X.CreateWindow(
                 win,
                 root,
@@ -39,15 +52,19 @@ export async function captureRegion(): Promise<Region> {
                 0,
                 0,
                 {
-                    eventMask: 
+                    eventMask:
                         x11.eventMask.PointerMotion |
                         x11.eventMask.ButtonPress |
                         x11.eventMask.ButtonRelease |
-                        x11.eventMask.KeyPress
+                        x11.eventMask.KeyPress,
+                    overrideRedirect: 1
                 }
             );
 
             X.MapWindow(win);
+
+            // focus=win, revert_to=RevertToParent(2), time=CurrentTime(0)
+            X.SetInputFocus(win, 2, 0);
 
             X.on('event', (ev: any) => {
 
@@ -65,7 +82,7 @@ export async function captureRegion(): Promise<Region> {
                 if (ev.type === 5 && dragging) { // ButtonRelease
                     dragging = false;
 
-                    X.DestroyWindow(win);
+                    cleanup();
 
                     const x = Math.min(startX, endX);
                     const y = Math.min(startY, endY);
@@ -77,7 +94,7 @@ export async function captureRegion(): Promise<Region> {
 
                 if (ev.type === 2) { // KeyPress
                     if (ev.keycode === 9) { // ESC
-                        X.DestroyWindow(win);
+                        cleanup();
                         reject('Region capture cancelled');
                     }
                 }
