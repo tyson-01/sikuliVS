@@ -5,3 +5,4 @@ node_modules
 *.vsix
 test-proj/
 dump.sh
+roadmap.txt

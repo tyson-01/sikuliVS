@@ -13,10 +13,11 @@ export function runPythonGui(action: string, extraArgs: string[] = []): Promise<
     return new Promise((resolve, reject) => {
         const rootDir = path.join(__dirname, '../../');
         const scriptPath = path.join(rootDir, 'python_gui/main.py');
-        
-        // Explicitly point to the local virtual environment's python binary
         const pythonPath = path.join(rootDir, '.venv/bin/python3');
-        const args = [`--action ${action}`, ...extraArgs].join(' ');
+        
+        // Combine action and any incoming extra arguments securely
+        const argsList = [`--action ${action}`, ...extraArgs];
+        const args = argsList.join(' ');
         
         exec(`"${pythonPath}" "${scriptPath}" ${args}`, (error, stdout, stderr) => {
             if (error) {
