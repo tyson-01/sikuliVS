@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import * as vscode from 'vscode';
 
 export interface ResolvedImage {
     staticName: string;      // The literal string from code (e.g. "btn_%s.png")
@@ -29,7 +30,6 @@ export function resolveImageFromLine(lineText: string, scriptDir: string): Resol
         }
     } else {
         // Dynamic file: Convert string format tokens into a robust regex
-        // Escape standard regex characters first, then swap out format blocks for wildcards
         let regexStr = rawString
             .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // escape regex symbols
             .replace(/%[sd]/g, '.*')               // swap %s or %d for wildcard
@@ -53,4 +53,30 @@ export function resolveImageFromLine(lineText: string, scriptDir: string): Resol
         isDynamic,
         absolutePaths
     };
+}
+
+/**
+ * Handles showing a VS Code selection dropdown if a dynamic string yields multiple file options.
+ */
+export async function getTargetImagePath(resolved: ResolvedImage): Promise<string | null> {
+    if (resolved.absolutePaths.length === 0) {
+        vscode.window.showErrorMessage(`SikuliVS: Asset file matching "${resolved.staticName}" could not be found.`);
+        return null;
+    }
+
+    if (resolved.absolutePaths.length === 1) {
+        return resolved.absolutePaths[0]; // Skip menu if there is only 1 match
+    }
+
+    // Multiple assets matched! Render the QuickPick selection dropdown menu
+    const items = resolved.absolutePaths.map(p => ({
+        label: path.basename(p),
+        description: p
+    }));
+
+    const selection = await vscode.window.showQuickPick(items, {
+        placeHolder: `Multiple files match "${resolved.staticName}". Select target image for action:`
+    });
+
+    return selection ? selection.description : null;
 }

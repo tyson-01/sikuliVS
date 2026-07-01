@@ -20,6 +20,11 @@ export function runPythonGui(action: string, extraArgs: string[] = []): Promise<
         const args = argsList.join(' ');
         
         exec(`"${pythonPath}" "${scriptPath}" ${args}`, (error, stdout, stderr) => {
+            // PIPELINE LOGS FOR TRACKING DOWN BACKEND BUG:
+            if (stderr) {
+                console.log(`[Python Backtrace / Logs]:\n${stderr}`);
+            }
+
             if (error) {
                 return reject(stderr.trim() || 'Process closed or cancelled.');
             }
