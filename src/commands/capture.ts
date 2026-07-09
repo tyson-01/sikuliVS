@@ -2,58 +2,68 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { runPythonGui } from '../bridge/guiBridge';
 
-export function registerCaptureCommand(context: vscode.ExtensionContext) {
-    const disposable = vscode.commands.registerCommand(
-        'sikuliVS.capture',
-        async () => {
-            try {
-                const editor = vscode.window.activeTextEditor;
-                if (!editor) {
-                    vscode.window.showWarningMessage('SikuliVS: No active text editor open.');
-                    return;
-                }
-
-                const activeDocument = editor.document;
-                const fileUri = activeDocument.uri;
-                const fileDir = path.dirname(fileUri.fsPath);
-                
-                // 1. Parse the script directory name (e.g., "my_script.sikuli" -> "my_script")
-                const scriptDirName = path.basename(fileDir).replace('.sikuli', '');
-
-                // 2. Read the current line to check for variable assignment
-                const currentLineText = activeDocument.lineAt(editor.selection.active.line).text;
-                const variableMatch = currentLineText.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=/);
-
-                let imageName = '';
-                if (variableMatch) {
-                    // Match found: "my_var =" -> "my_script_my_var.png"
-                    imageName = `${scriptDirName}_${variableMatch[1]}.png`;
-                } else {
-                    // Fallback to random fixed length string timestamp: "my_script_1719853921.png"
-                    imageName = `${scriptDirName}_${Math.floor(Date.now() / 1000)}.png`;
-                }
-
-                // 3. Resolve the absolute output path to drop it right in the script's directory
-                const absoluteOutputPath = path.join(fileDir, imageName);
-
-                // 4. Spin up the backend capture UI passing the path as a flag
-                const output = await runPythonGui('capture', [`--out "${absoluteOutputPath}"`]);
-
-                if (output === 'SUCCESS') {
-                    // 5. Build clean, idiomatic Sikuli string literal: "image_name.png"
-                    const textToInsert = `"${imageName}"`;
-
-                    editor.edit(editBuilder => {
-                        const pos = editor.selection.active;
-                        editBuilder.insert(pos, textToInsert);
-                    });
-                } else {
-                    vscode.window.showErrorMessage(`SikuliVS: Backend capture failed.`);
-                }
-            } catch (err) {
-                vscode.window.showInformationMessage(`SikuliVS: ${err}`);
+/**
+ * Command: sikuliVS.capture
+ * Triggers a Python GUI to capture a screen region, automatically naming the 
+ * resulting image based on the active script directory and current line variable.
+ */
+export function registerCaptureCommand(context: vscode.ExtensionContext): void {
+    const disposable = vscode.commands.registerCommand('sikuliVS.capture', async () => {
+        try {
+            const editor = vscode.window.activeTextEditor;
+            if (!editor) {
+                vscode.window.showWarningMessage('SikuliVS: No active text editor open.');
+                return;
             }
+
+            // 1. Extract environment context from the active file
+            const fileDir = path.dirname(editor.document.uri.fsPath);
+            const scriptName = path.basename(fileDir).replace('.sikuli', '');
+
+            // 2. Determine the image filename based on the user's code context
+            const imageName = determineImageName(editor, scriptName);
+            const absoluteOutputPath = path.join(fileDir, imageName);
+
+            // 3. Launch external Python GUI tool to take the screenshot
+            const result = await runPythonGui('capture', [`--out "${absoluteOutputPath}"`]);
+
+            // 4. Inject the final string into the editor on success
+            if (result === 'SUCCESS') {
+                insertTextAtCursor(editor, `"${imageName}"`);
+            } else {
+                vscode.window.showErrorMessage('SikuliVS: Backend capture failed.');
+            }
+        } catch (err) {
+            vscode.window.showErrorMessage(`SikuliVS Error: ${err}`);
         }
-    );
+    });
+
     context.subscriptions.push(disposable);
+}
+
+/**
+ * Analyzes the current cursor line. If it finds a variable assignment (e.g., `my_var =`),
+ * it uses that variable for the image name. Otherwise, it falls back to a timestamp.
+ */
+function determineImageName(editor: vscode.TextEditor, scriptName: string): string {
+    const currentLineText = editor.document.lineAt(editor.selection.active.line).text;
+    
+    const variableMatch = currentLineText.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=/);
+
+    if (variableMatch) {
+        return `${scriptName}_${variableMatch[1]}.png`; // Regex name
+    }
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    return `${scriptName}_${timestamp}.png`; // Fallback name
+}
+
+/**
+ * Helper to safely mutate the active text document and insert text at the cursor position.
+ */
+function insertTextAtCursor(editor: vscode.TextEditor, text: string): void {
+    editor.edit((editBuilder) => {
+        const position = editor.selection.active;
+        editBuilder.insert(position, text);
+    });
 }

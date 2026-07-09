@@ -4,7 +4,12 @@ import { parseSikuliLine, rebuildSikuliLine } from '../utils/modifier';
 import { resolveImageFromLine, getTargetImagePath } from '../utils/resolver';
 import { runPythonGui } from '../bridge/guiBridge';
 
-export function registerMatchCommand(context: vscode.ExtensionContext) {
+/**
+ * Command: sikuliVS.match
+ * Launches a full-screen CV2 match window to tune image similarity targeting.
+ * Accepts an optional `incomingLineIndex` if triggered via CodeLens or internal events.
+ */
+export function registerMatchCommand(context: vscode.ExtensionContext): void {
     const disposable = vscode.commands.registerCommand(
         'sikuliVS.match',
         async (incomingLineIndex?: number) => {
@@ -15,51 +20,29 @@ export function registerMatchCommand(context: vscode.ExtensionContext) {
                 const document = editor.document;
                 const scriptDir = path.dirname(document.uri.fsPath);
 
-                // 1. Determine target code line index
-                const targetLineIndex = incomingLineIndex !== undefined ? incomingLineIndex : editor.selection.active.line;
+                // 1. Context fallback: Use passed-in line index(eg codelens), or default to current cursor line
+                const targetLineIndex = incomingLineIndex ?? editor.selection.active.line;
                 const lineText = document.lineAt(targetLineIndex).text;
 
-                // 2. Parse existing code modifications (if any)
+                // 2. Parse existing code tokens
                 const tokens = parseSikuliLine(lineText, scriptDir);
                 if (!tokens) {
                     vscode.window.showWarningMessage("SikuliVS: Could not parse a valid image reference on this line.");
                     return;
                 }
 
-                // 3. Resolve file assets (handles dynamic QuickPick selection seamlessly)
-                const resolvedImage = resolveImageFromLine(lineText, scriptDir);
-                if (!resolvedImage) {
-                    vscode.window.showWarningMessage("SikuliVS: Could not resolve image paths.");
-                    return;
-                }
+                // 3. Resolve targeted asset path
+                const resolvedPath = await resolveTargetAsset(lineText, scriptDir);
+                if (!resolvedPath) return; // User canceled
 
-                const resolvedPath = await getTargetImagePath(resolvedImage);
-                if (!resolvedPath) return; // User exited choice menu
+                // 4. Launch backend Match tuning overlay
+                const initialSimilarity = tokens.currentSimilarity ?? 0.7;
+                const finalSimilarity = await executeMatchGui(resolvedPath, initialSimilarity);
+                if (finalSimilarity === null) return; // UI closed or invalid output
 
-                // Pull previous similarity score to seed the slider. Default to 0.7 if non-existent.
-                const initSim = tokens.currentSimilarity !== null ? tokens.currentSimilarity : 0.7;
-
-                // 4. Fire up full-screen CV2 match window
-                const guiFlags = [
-                    `--image "${resolvedPath}"`,
-                    `--similarity ${initSim}`
-                ];
-
-                vscode.window.setStatusBarMessage("SikuliVS: Scanning screen for matches...", 2000);
-                const result = await runPythonGui('match', guiFlags);
-                
-                const finalSimilarity = parseFloat(result.trim());
-                if (isNaN(finalSimilarity)) return;
-
-                // 5. Build and rewrite document line with new parameters
-                const updatedLineText = rebuildSikuliLine(tokens, {
-                    similarity: finalSimilarity
-                });
-
-                await editor.edit(editBuilder => {
-                    const lineRange = new vscode.Range(targetLineIndex, 0, targetLineIndex, lineText.length);
-                    editBuilder.replace(lineRange, updatedLineText);
-                });
+                // 5. Rewrite the document line with the newly tuned similarity score
+                const updatedLineText = rebuildSikuliLine(tokens, { similarity: finalSimilarity });
+                await replaceLineText(editor, targetLineIndex, lineText.length, updatedLineText);
 
             } catch (err) {
                 if (err !== 'Cancelled') {
@@ -68,5 +51,44 @@ export function registerMatchCommand(context: vscode.ExtensionContext) {
             }
         }
     );
+
     context.subscriptions.push(disposable);
+}
+
+/**
+ * Resolves the underlying image path, handling dynamic menus.
+ */
+async function resolveTargetAsset(lineText: string, scriptDir: string): Promise<string | null> {
+    const resolvedImage = resolveImageFromLine(lineText, scriptDir);
+    if (!resolvedImage) {
+        vscode.window.showWarningMessage("SikuliVS: Could not resolve image paths.");
+        return null;
+    }
+    return await getTargetImagePath(resolvedImage);
+}
+
+/**
+ * Handles communication with the Python matching GUI, returning the resulting similarity score.
+ */
+async function executeMatchGui(imagePath: string, initialSimilarity: number): Promise<number | null> {
+    const guiFlags = [
+        `--image "${imagePath}"`,
+        `--similarity ${initialSimilarity}`
+    ];
+
+    vscode.window.setStatusBarMessage("SikuliVS: Scanning screen for matches...", 2000);
+    const result = await runPythonGui('match', guiFlags);
+    
+    const parsingResult = parseFloat(result.trim());
+    return isNaN(parsingResult) ? null : parsingResult;
+}
+
+/**
+ * Utility to execute an in-place line replacement inside the active text document.
+ */
+async function replaceLineText(editor: vscode.TextEditor, lineIndex: number, lineLength: number, newText: string): Promise<boolean> {
+    return editor.edit(editBuilder => {
+        const lineRange = new vscode.Range(lineIndex, 0, lineIndex, lineLength);
+        editBuilder.replace(lineRange, newText);
+    });
 }

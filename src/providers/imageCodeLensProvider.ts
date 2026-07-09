@@ -2,11 +2,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { resolveImageFromLine } from '../utils/resolver';
 
+/**
+ * Custom CodeLens provider that scans the active file for image strings.
+ * Injects floating actionable text links ("Set Offset", "Preview Match") directly above matches.
+ */
 export class ImageCodeLensProvider implements vscode.CodeLensProvider {
-    public provideCodeLenses(
+    
+    public async provideCodeLenses(
         document: vscode.TextDocument,
-        token: vscode.CancellationToken
-    ): vscode.CodeLens[] | Thenable<vscode.CodeLens[]> {
+        _token: vscode.CancellationToken
+    ): Promise<vscode.CodeLens[]> {
         const lenses: vscode.CodeLens[] = [];
         const scriptDir = path.dirname(document.uri.fsPath);
 
@@ -15,16 +20,17 @@ export class ImageCodeLensProvider implements vscode.CodeLensProvider {
             const resolved = resolveImageFromLine(lineText, scriptDir);
 
             if (resolved) {
+                // CodeLenses are anchored to a specific line range buffer
                 const range = new vscode.Range(i, 0, i, 0);
 
-                // Command link to trigger relative target offsets (Phase 2)
+                // Injects floating link to set mouse target offsets
                 lenses.push(new vscode.CodeLens(range, {
                     title: "🎯 Set Offset",
                     command: "sikuliVS.offset",
-                    arguments: [i] // Pass line number context index
+                    arguments: [i] // Passes the specific line index context to the command listener
                 }));
 
-                // Command link to run visual verification checks (Phase 3)
+                // Injects floating link to run similarity matches
                 lenses.push(new vscode.CodeLens(range, {
                     title: "🔍 Preview Match",
                     command: "sikuliVS.match",

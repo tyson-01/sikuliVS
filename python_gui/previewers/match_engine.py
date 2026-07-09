@@ -1,22 +1,28 @@
-# match_engine.py
 import cv2
 import numpy as np
 import os
 import sys
+from typing import Any
 
-def match_against_screen(screen_bgr, image_path, threshold=0.7):
-    """
-    Runs template matching against an ALREADY-CAPTURED screen image.
-    Does not take a new screenshot — caller is responsible for capturing once.
-    Returns: (match_list_of_dicts, highest_match_xy)
+def match_against_screen(
+    screen_bgr: np.ndarray, 
+    image_path: str, 
+    threshold: float = 0.7
+) -> tuple[list[dict[str, Any]], tuple[int, int] | None]:
+    """Runs template matching against an already-captured BGR screen matrix.
+
+    Returns:
+        A tuple containing:
+          - A list of matching bounding-box dictionaries with coordinates and scores.
+          - A coordinate tuple (x, y) representing the absolute highest match center.
     """
     if not os.path.exists(image_path):
         print(f"Error: Target image file not found at {image_path}", file=sys.stderr)
         return [], None
 
     screen_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
-
     template_bgr = cv2.imread(image_path)
+    
     if template_bgr is None:
         print(f"Error: OpenCV could not read image at {image_path}", file=sys.stderr)
         return [], None
@@ -24,25 +30,29 @@ def match_against_screen(screen_bgr, image_path, threshold=0.7):
     template_gray = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY)
     h, w = template_gray.shape[:2]
 
+    # Execute Normalized Cross-Correlation Template Match
     res = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
 
+    # Locate hits that pass our similarity score threshold
     loc = np.where(res >= threshold)
     matches = []
 
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+    # Identify the absolute single best candidate hit
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
     highest_match_center = None
     if max_val >= threshold:
         highest_match_center = (max_loc[0] + w // 2, max_loc[1] + h // 2)
 
-    rectangles = []
-    for pt in zip(*loc[::-1]):
-        rectangles.append([int(pt[0]), int(pt[1]), int(w), int(h)])
+    # Compile overlapping match bounding boxes
+    rectangles = [[int(pt[0]), int(pt[1]), int(w), int(h)] for pt in zip(*loc[::-1])]
 
-    rectangles = list(rectangles)
-    rectangles, weights = cv2.groupRectangles(rectangles, groupThreshold=1, eps=0.2)
+    # Suppress overlapping duplicate bounding box frames
+    rectangles, _ = cv2.groupRectangles(rectangles, groupThreshold=1, eps=0.2)
 
     for rect in rectangles:
-        rx, ry, rw, rh = int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])
+        rx, ry, rw, rh = map(int, rect[:4])
+        
+        # Guard against array index overruns when retrieving specific confidence metrics
         score_y = min(ry, res.shape[0] - 1)
         score_x = min(rx, res.shape[1] - 1)
         actual_score = float(res[score_y, score_x])

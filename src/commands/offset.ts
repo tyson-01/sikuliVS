@@ -1,10 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { parseSikuliLine, rebuildSikuliLine } from '../utils/modifier';
-import { resolveImageFromLine, getTargetImagePath } from '../utils/resolver'; // Fixed imports
+import { resolveImageFromLine, getTargetImagePath } from '../utils/resolver';
 import { runPythonGui } from '../bridge/guiBridge';
 
-export function registerOffsetCommand(context: vscode.ExtensionContext) {
+/**
+ * Command: sikuliVS.offset
+ * Launches a targeted crosshair GUI over an image asset to calculate visual mouse offsets (dx, dy).
+ * Modifies and updates the target document line inline.
+ */
+export function registerOffsetCommand(context: vscode.ExtensionContext): void {
     const disposable = vscode.commands.registerCommand(
         'sikuliVS.offset',
         async (incomingLineIndex?: number) => {
@@ -15,52 +20,29 @@ export function registerOffsetCommand(context: vscode.ExtensionContext) {
                 const document = editor.document;
                 const scriptDir = path.dirname(document.uri.fsPath);
 
-                // 1. Identify which line we are modifying
-                const targetLineIndex = incomingLineIndex !== undefined ? incomingLineIndex : editor.selection.active.line;
+                // 1. Determine targeted workspace line
+                const targetLineIndex = incomingLineIndex ?? editor.selection.active.line;
                 const lineText = document.lineAt(targetLineIndex).text;
 
-                // 2. Parse structural token data out of the target line (for rebuilding later)
+                // 2. Parse structural token metadata from the target line
                 const tokens = parseSikuliLine(lineText, scriptDir);
                 if (!tokens) {
                     vscode.window.showWarningMessage("SikuliVS: Could not parse a valid image reference on this line.");
                     return;
                 }
 
-                // 3. Resolve file assets using our dedicated resolver module
-                const resolvedImage = resolveImageFromLine(lineText, scriptDir);
-                if (!resolvedImage) {
-                    vscode.window.showWarningMessage("SikuliVS: Could not resolve image paths.");
-                    return;
-                }
+                // 3. Resolve target file assets 
+                const resolvedPath = await resolveTargetAsset(lineText, scriptDir);
+                if (!resolvedPath) return; // User canceled dynamic selection
 
-                // Pass the correct ResolvedImage object to get the chosen absolute string path
-                const resolvedPath = await getTargetImagePath(resolvedImage);
-                if (!resolvedPath) return; // Cancelled by user selection exit
+                // 4. Fire up sidecar Python coordinate-picker GUI
+                const initialOffset = tokens.currentOffset ?? [0, 0];
+                const newOffset = await executeOffsetGui(resolvedPath, initialOffset);
+                if (!newOffset) return; // Closed or bad return output
 
-                // Extract existing offset configurations to pass down for prepopulation
-                const initDx = tokens.currentOffset ? tokens.currentOffset[0] : 0;
-                const initDy = tokens.currentOffset ? tokens.currentOffset[1] : 0;
-
-                // 4. Invoke python sidecar window
-                const guiFlags = [
-                    `--image "${resolvedPath}"`,
-                    `--dx ${initDx}`,
-                    `--dy ${initDy}`
-                ];
-                
-                const result = await runPythonGui('offset', guiFlags);
-                const [outDx, outDy] = result.split(',').map(Number);
-
-                // 5. Rebuild the line of text using new coordinates
-                const updatedLineText = rebuildSikuliLine(tokens, {
-                    offset: [outDx, outDy]
-                });
-
-                // Apply the code updates straight to the document layer
-                await editor.edit(editBuilder => {
-                    const lineRange = new vscode.Range(targetLineIndex, 0, targetLineIndex, lineText.length);
-                    editBuilder.replace(lineRange, updatedLineText);
-                });
+                // 5. Rewrite document line configuration with calculated coordinate pairs
+                const updatedLineText = rebuildSikuliLine(tokens, { offset: newOffset });
+                await replaceLineText(editor, targetLineIndex, lineText.length, updatedLineText);
 
             } catch (err) {
                 if (err !== 'Cancelled') {
@@ -69,5 +51,46 @@ export function registerOffsetCommand(context: vscode.ExtensionContext) {
             }
         }
     );
+
     context.subscriptions.push(disposable);
+}
+
+/**
+ * Direct abstraction helper to identify image paths.
+ */
+async function resolveTargetAsset(lineText: string, scriptDir: string): Promise<string | null> {
+    const resolvedImage = resolveImageFromLine(lineText, scriptDir);
+    if (!resolvedImage) {
+        vscode.window.showWarningMessage("SikuliVS: Could not resolve image paths.");
+        return null;
+    }
+    return await getTargetImagePath(resolvedImage);
+}
+
+/**
+ * Coordinates sidecar python invocation to capture user click offsets.
+ * Returns tuple [dx, dy] or null if processing was dropped or closed.
+ */
+async function executeOffsetGui(imagePath: string, [initDx, initDy]: [number, number]): Promise<[number, number] | null> {
+    const guiFlags = [
+        `--image "${imagePath}"`,
+        `--dx ${initDx}`,
+        `--dy ${initDy}`
+    ];
+    
+    const result = await runPythonGui('offset', guiFlags);
+    if (!result || result.trim() === '') return null;
+
+    const [outDx, outDy] = result.split(',').map(Number);
+    return isNaN(outDx) || isNaN(outDy) ? null : [outDx, outDy];
+}
+
+/**
+ * Utility to execute an in-place line replacement inside the active text document.
+ */
+async function replaceLineText(editor: vscode.TextEditor, lineIndex: number, lineLength: number, newText: string): Promise<boolean> {
+    return editor.edit(editBuilder => {
+        const lineRange = new vscode.Range(lineIndex, 0, lineIndex, lineLength);
+        editBuilder.replace(lineRange, newText);
+    });
 }

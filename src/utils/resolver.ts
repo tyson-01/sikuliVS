@@ -3,48 +3,48 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 
 export interface ResolvedImage {
-    staticName: string;      // The literal string from code (e.g. "btn_%s.png")
-    isDynamic: boolean;       // True if it contained formatting tokens
-    absolutePaths: string[];  // List of matching file(s) found on disk
+    staticName: string;         // The literal string from code (e.g. "btn_%s.png")
+    isDynamic: boolean;         // True if it contained formatting tokens
+    absolutePaths: string[];    // List of matching file(s) found on disk
 }
 
+/**
+ * Parses a code string to find an image filename, then scans the script's directory 
+ * to find any matching files (handling dynamic wildcards(no f-strings)).
+ */
 export function resolveImageFromLine(lineText: string, scriptDir: string): ResolvedImage | null {
-    // 1. Regex to pull the first single or double-quoted string ending in .png
+    // 1. Pull the first single or double-quoted string ending in .png
     const stringMatch = lineText.match(/(?:"([^"]+\.png)"|'([^']+\.png)')/);
     if (!stringMatch) return null;
 
-    const rawString = stringMatch[1] || stringMatch[2];
+    const rawString = stringMatch[1] ?? stringMatch[2];
     
-    // 2. Check if it contains Jython 2.7 formatting features: %s, %d, or {}
-    const hasModulo = /%[sd]/.test(rawString);
-    const hasFormat = /\{.*\}/.test(rawString);
-    const isDynamic = hasModulo || hasFormat;
-
+    // 2. Identify Jython 2.7 formatting features (%s, %d, or {})
+    const isDynamic = /%[sd]/.test(rawString) || /\{.*\}/.test(rawString);
     let absolutePaths: string[] = [];
 
     if (!isDynamic) {
-        // Static file: Simple direct path verification
+        // Simple case: Direct path verification for static assets
         const fullPath = path.join(scriptDir, rawString);
         if (fs.existsSync(fullPath)) {
             absolutePaths.push(fullPath);
         }
     } else {
-        // Dynamic file: Convert string format tokens into a robust regex
-        let regexStr = rawString
-            .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // escape regex symbols
-            .replace(/%[sd]/g, '.*')               // swap %s or %d for wildcard
-            .replace(/\\{.*?\\}/g, '.*');           // swap {} or {name} for wildcard
+        // Complex case: Convert string format tokens into a search regex pattern
+        const regexStr = escapeRegex(rawString)
+            .replace(/%[sd]/g, '.*')
+            .replace(/\\{.*?\\}/g, '.*');
             
         const searchRegex = new RegExp(`^${regexStr}$`);
 
-        // Scan the active folder for physical asset hits
+        // Scan the folder for dynamic wildcard matches
         try {
             const files = fs.readdirSync(scriptDir);
             absolutePaths = files
                 .filter(file => searchRegex.test(file))
                 .map(file => path.join(scriptDir, file));
-        } catch (e) {
-            // Folder read failed or missing
+        } catch {
+            // Silence standard folder read / empty directory structural crashes
         }
     }
 
@@ -56,7 +56,8 @@ export function resolveImageFromLine(lineText: string, scriptDir: string): Resol
 }
 
 /**
- * Handles showing a VS Code selection dropdown if a dynamic string yields multiple file options.
+ * Handles showing a VS Code QuickPick selection dropdown if a dynamic string yields 
+ * multiple physical file options. Returns the single selected absolute path string.
  */
 export async function getTargetImagePath(resolved: ResolvedImage): Promise<string | null> {
     if (resolved.absolutePaths.length === 0) {
@@ -65,18 +66,25 @@ export async function getTargetImagePath(resolved: ResolvedImage): Promise<strin
     }
 
     if (resolved.absolutePaths.length === 1) {
-        return resolved.absolutePaths[0]; // Skip menu if there is only 1 match
+        return resolved.absolutePaths[0]; // Skip menu layer if there is only 1 asset path match
     }
 
-    // Multiple assets matched! Render the QuickPick selection dropdown menu
-    const items = resolved.absolutePaths.map(p => ({
-        label: path.basename(p),
-        description: p
+    // Multiple assets matched. Map items straight into standard "QuickPick" choices
+    const quickPickItems = resolved.absolutePaths.map(absolutePath => ({
+        label: path.basename(absolutePath),
+        description: absolutePath
     }));
 
-    const selection = await vscode.window.showQuickPick(items, {
+    const selection = await vscode.window.showQuickPick(quickPickItems, {
         placeHolder: `Multiple files match "${resolved.staticName}". Select target image for action:`
     });
 
-    return selection ? selection.description : null;
+    return selection?.description ?? null;
+}
+
+/**
+ * Helper to safely escape characters for dynamic RegExp creation.
+ */
+function escapeRegex(text: string): string {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

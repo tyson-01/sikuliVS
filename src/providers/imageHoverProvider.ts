@@ -2,37 +2,52 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { resolveImageFromLine } from '../utils/resolver';
 
+/**
+ * Custom hover provider that listens for mouse hovers over lines containing image strings.
+ * Renders an inline Markdown popup previewing the corresponding screenshot(s).
+ */
 export class ImageHoverProvider implements vscode.HoverProvider {
-    public provideHover(
+    
+    public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
-        token: vscode.CancellationToken
-    ): vscode.ProviderResult<vscode.Hover> {
+        _token: vscode.CancellationToken
+    ): Promise<vscode.Hover | null> {
         const lineText = document.lineAt(position.line).text;
         const scriptDir = path.dirname(document.uri.fsPath);
 
         const resolved = resolveImageFromLine(lineText, scriptDir);
-        if (!resolved || resolved.absolutePaths.length === 0) return null;
+        if (!resolved || resolved.absolutePaths.length === 0) {
+            return null;
+        }
 
-        // Construct Markdown content layout string for the popup frame
         const markdown = new vscode.MarkdownString();
         markdown.isTrusted = true;
 
-        if (resolved.absolutePaths.length === 1) {
-            const targetUri = vscode.Uri.file(resolved.absolutePaths[0]).toString();
+        const totalMatches = resolved.absolutePaths.length;
+
+        if (totalMatches === 1) {
+            // Case 1: Render a single-image preview frame
+            const absolutePath = resolved.absolutePaths[0];
+            const targetUri = vscode.Uri.file(absolutePath).toString();
+
             markdown.appendMarkdown(`### 📷 SikuliVS Image Preview\n\n`);
             markdown.appendMarkdown(`![Preview](${targetUri})\n\n`);
-            markdown.appendMarkdown(`**Path:** \`${path.basename(resolved.absolutePaths[0])}\``);
+            markdown.appendMarkdown(`**Path:** \`${path.basename(absolutePath)}\``);
         } else {
-            markdown.appendMarkdown(`### 🔍 Multiple Matches Found (${resolved.absolutePaths.length})\n\n`);
-            resolved.absolutePaths.slice(0, 5).forEach(p => {
-                const targetUri = vscode.Uri.file(p).toString();
+            // Case 2: Render a multi-image list overlay capped at a max of 5 elements
+            markdown.appendMarkdown(`### 🔍 Multiple Matches Found (${totalMatches})\n\n`);
+            
+            const visiblePaths = resolved.absolutePaths.slice(0, 5);
+            for (const absolutePath of visiblePaths) {
+                const targetUri = vscode.Uri.file(absolutePath).toString();
                 markdown.appendMarkdown(`---\n`);
                 markdown.appendMarkdown(`![Preview](${targetUri})\n\n`);
-                markdown.appendMarkdown(`\`${path.basename(p)}\`\n`);
-            });
-            if (resolved.absolutePaths.length > 5) {
-                markdown.appendMarkdown(`\n*And ${resolved.absolutePaths.length - 5} more files...*`);
+                markdown.appendMarkdown(`\`${path.basename(absolutePath)}\`\n`);
+            }
+
+            if (totalMatches > 5) {
+                markdown.appendMarkdown(`\n*And ${totalMatches - 5} more files...*`);
             }
         }
 
