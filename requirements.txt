@@ -1,0 +1,4 @@
+dbus-fast==5.0.22
+numpy==2.5.0
+opencv-python==4.13.0.92
+pillow==12.3.0

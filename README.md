@@ -1,71 +1,78 @@
-# sikuliVS README
+# sikuliVS
 
-This is the README for your extension "sikuliVS". After writing up a brief description, we recommend including the following sections.
+A VS Code extension designed to completely replace the external Sikuli IDE by embedding visual automation tools directly into your standard code editor.
 
-## Features
+*Note: This extension is in **early** development.*
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
+## What/Why
 
-For example if there is an image subfolder under your extension project workspace:
+This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar to handle four specific roles:
 
-\!\[feature X\]\(images/feature-x.png\)
+| Feature | Description |
+|---------|-------------|
+| **Region** | Click and drag anywhere on your display to instantly inject native `Region(x, y, w, h)` coordinate snippets directly at your cursor position. |
+| **Capture** | Take an on-screen snapshot. The tool looks backward on your current line for a variable assignment (e.g. `target_img =`) and titles the file dynamically (`scriptName_target_login.png`) before inserting the string filename at the cursor. If no variable is found, it falls back to a Unix timestamp for the image name. |
+| **Offset** | Parses an existing image reference and offset from your active code line, launching an interactive crosshair over the asset to calculate mouse `[dx, dy]` targets. Confirming a point updates your line configuration in-place. |
+| **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. |
 
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
+## Differences from the Sikuli IDE / Quality of Life Features
 
-## Requirements
+This extension is opinionated. A few things that fit my workflow have been implemented.
 
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
+### Image display
 
-## Extension Settings
+Rather than a toggle for displaying image in-line within the code or the image path text; this instead shows text with hover for image display.
 
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
+### Dynamic image naming
 
-For example:
+Using Jython 2.7 dynamic images (e.g. `("my_script_my_img_%s.png" % my_var)` or `.format()` style) can dynamically look up all possible images.
 
-This extension contributes the following settings:
+## Limitations / Future Work
 
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
+Currently does not replace all Sikuli IDE functions.
 
-## Known Issues
+- **Run:** Does not currently allow running the open Sikuli Jython script.
+- **Environment:** Only tested on Fedora 44 KDE Plasma.
 
-Calling out known issues can help limit users opening duplicate issues against your extension.
+## Known Bugs
 
-## Release Notes
+- **Match:** Just sort of broken, matching doesn't accurately show all legitimate matches in current capture. I'll fix this next.
+- **???:** Probably a bunch of stuff.
 
-Users appreciate release notes as you update your extension.
+## How to Run and Test
 
-### 1.0.0
+Execute these steps in your local terminal to establish workspace and run the extension in debug mode.
 
-Initial release of ...
+### 1. Install Extension Dependencies
 
-### 1.0.1
+Download and compile the extension frontend dependencies from the project root.
 
-Fixed issue #.
+```bash
+npm install
+```
 
-### 1.1.0
+### 2. Configure the Python Virtual Environment
 
-Added features X, Y, and Z.
+The extension bridge strictly invokes a localized Python binary at `./.venv/bin/python3`. You must provision your virtual environment exactly at this path in the root folder.
 
----
+```bash
+# Initialize the environment
+python3 -m venv .venv
 
-## Following extension guidelines
+# Activate the environment
+source .venv/bin/activate
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+# Install required computer-vision packages
+pip install -r requirements.txt
+```
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+### 3. Launch the Debugger
 
-## Working with Markdown
+1. Open the **sikuliVS** project root folder in VS Code.
+2. Press **F5** (or navigate to the **Run and Debug** panel and select **Launch Extension**).
+3. This will launch a separate **Extension Development Host** workspace window.
+4. Open your active automation scripts or directories inside that development window to test or execute the tools via the sidebar panel and text shortcuts.
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+## Acknowledgements
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+All hail RaiMan.
