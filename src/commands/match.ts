@@ -1,14 +1,15 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { parsePatternExpr, renderPatternExpr } from '../utils/patternExpression';
-import { pickImagePath, resolveImageAt } from '../utils/resolver';
+import { DEFAULT_SIMILARITY, parsePatternExpr, renderPatternExpr } from '../utils/patternExpression';
+import { resolveImageAt } from '../utils/resolver';
 import { runPythonGui } from '../bridge/guiBridge';
-
-const DEFAULT_SIMILARITY = 0.7;
+import { showError } from '../utils/output';
 
 /**
  * Command: sikuliVS.match
- * Launches a CV2 match window to tune the similarity of one image reference.
+ * Launches a CV2 match window to tune the similarity of one image reference. A dynamic
+ * name resolving to several files hands them all over, so the preview shows which
+ * variants match the current screen.
  * CodeLens passes the line and character offset of its reference; from the palette
  * the reference under the cursor is used.
  */
@@ -40,20 +41,22 @@ export function registerMatchCommand(context: vscode.ExtensionContext): void {
                     return;
                 }
 
-                const imagePath = await pickImagePath(resolved);
-                if (!imagePath) {
-                    return; // Not found, or dismissed
+                if (resolved.absolutePaths.length === 0) {
+                    vscode.window.showWarningMessage(
+                        `SikuliVS: No file on disk matches "${resolved.ref.namePattern}".`
+                    );
+                    return;
                 }
 
                 // 2. Read any existing Pattern configuration
                 const expr = parsePatternExpr(lineText, resolved.ref);
                 const initialSimilarity = expr.similar ?? DEFAULT_SIMILARITY;
 
-                // 3. Launch the backend match tuning window
+                // 3. Launch the backend match tuning window over every resolved image
                 vscode.window.setStatusBarMessage('SikuliVS: Scanning screen for matches...', 2000);
                 const result = await runPythonGui('match', [
-                    '--image', imagePath,
-                    '--similarity', String(initialSimilarity)
+                    '--similarity', String(initialSimilarity),
+                    '--images', ...resolved.absolutePaths
                 ]);
                 if (result === null) {
                     return; // Cancelled
@@ -69,7 +72,7 @@ export function registerMatchCommand(context: vscode.ExtensionContext): void {
                     renderPatternExpr(expr, { similar }));
 
             } catch (err) {
-                vscode.window.showErrorMessage(`SikuliVS Match Error: ${err}`);
+                showError(`SikuliVS Match Error: ${err}`);
             }
         }
     );

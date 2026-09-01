@@ -1,3 +1,4 @@
+import os
 import queue
 import sys
 import threading
@@ -22,9 +23,17 @@ MUTED = "#aaaaaa"
 BEST_COLOUR = "#00e05a"   # The hit SikuliX would act on
 MATCH_COLOUR = "#ff3333"  # Every other hit above the threshold
 
+# One colour per image in the overlay-all view. Green and red are deliberately absent:
+# they mean best hit and other hits in the single-image view, and reusing them here makes
+# two images look like one image's ranked matches.
+PALETTE = ["#3aa0ff", "#ffb020", "#c86bff", "#00d0c0", "#ff6fd8", "#ffe14d", "#7d8cff"]
+
 STEP = 0.01
 COARSE_STEP = 0.05
 MIN_LABEL_WIDTH = 26  # Below this on-screen box width, score labels become unreadable
+LEGEND_COLUMNS = 3
+LEGEND_MAX_ROWS = 4
+THUMBNAIL_MAX = (120, 40)
 
 
 def _load_font(size: int) -> Any:
@@ -41,21 +50,27 @@ def _load_font(size: int) -> Any:
 
 
 class MatchPreviewWindow:
-    def __init__(self, screen_bgr: np.ndarray, image_path: str, initial_sim: float = 0.7):
-        self.image_path = image_path
+    def __init__(self, screen_bgr: np.ndarray, image_paths: list[str], initial_sim: float = 0.7):
+        self.image_paths = list(image_paths)
+        self.multi = len(self.image_paths) > 1
         self.similarity = min(max(initial_sim, 0.0), 1.0)
         self.screen_bgr = screen_bgr  # High-res master source layer
 
         self.orig_h, self.orig_w = screen_bgr.shape[:2]
 
-        # The correlation pass is threshold independent, so it runs once on a worker thread
-        self.matcher: ScreenMatcher | None = None
-        self.cached_matches: list[dict[str, Any]] = []
-        self._result_queue: queue.Queue[ScreenMatcher | Exception] = queue.Queue()
+        # A correlation pass is threshold independent, so each image is analysed once on a
+        # worker thread and only re-filtered afterwards.
+        self.matchers: dict[str, ScreenMatcher | Exception] = {}
+        self.results: dict[str, list[dict[str, Any]]] = {}
+        self._result_queue: queue.Queue[tuple[str, ScreenMatcher | Exception]] = queue.Queue()
+
+        # "all" overlays every image, an int isolates that one
+        self.view: str | int = "all" if self.multi else 0
 
         # Guards Entry <-> Scale write-backs, and coalesces redraws during a drag
         self._syncing = False
         self._render_job: str | None = None
+        self._closing = False
 
         self._base_scale: float | None = None
         self._base_image: Image.Image | None = None
@@ -76,7 +91,8 @@ class MatchPreviewWindow:
 
         # 2. Compute Fit-To-Screen Scaling factor default
         # Leave a small pixel buffer for the embedded toolbars
-        self.fit_scale = min((win_w - 40) / self.orig_w, (win_h - 150) / self.orig_h, 1.0)
+        chrome = 220 if self.multi else 150
+        self.fit_scale = min((win_w - 40) / self.orig_w, (win_h - chrome) / self.orig_h, 1.0)
         self.scale_factor = self.fit_scale
 
         # 3. Workspace Layout Architecture Setup
@@ -110,12 +126,16 @@ class MatchPreviewWindow:
 
         self._build_controls()
         self._bind_shortcuts()
+        self._update_carousel_label()
 
         # 4. Paint the screenshot immediately, then analyse in the background
         self.request_render()
         self.set_status("Analyzing screen…", MUTED)
         threading.Thread(target=self._run_analysis, daemon=True).start()
         self.root.after(50, self._poll_analysis)
+
+    def colour_for(self, index: int) -> str:
+        return PALETTE[index % len(PALETTE)]
 
     # ------------------------------------------------------------------ UI build
 
@@ -169,10 +189,16 @@ class MatchPreviewWindow:
         self.sim_entry.bind("<Up>", lambda _: self.step_similarity(STEP) or "break")
         self.sim_entry.bind("<Down>", lambda _: self.step_similarity(-STEP) or "break")
 
+        if self.multi:
+            self._build_carousel(left)
+
         self.status_label = tk.Label(
             left, text="", bg=PANEL_BG, fg=MUTED, font=("Helvetica", 10), anchor="w"
         )
         self.status_label.pack(side="top", anchor="w", pady=(8, 0))
+
+        if self.multi:
+            self._build_legend(left)
 
         right = tk.Frame(self.control_panel, bg=PANEL_BG)
         right.pack(side="right", padx=(20, 0))
@@ -182,11 +208,63 @@ class MatchPreviewWindow:
         self._button(buttons, "Save  (Enter)", self.save_and_exit, bg=ACCENT, activebackground="#1b8ad6").pack(side="left", padx=(0, 8))
         self._button(buttons, "Cancel  (Esc)", self.cancel_and_exit).pack(side="left")
 
+        hint = "◀ ▶ or ← → step 0.01  ·  Shift ± 0.05  ·  Ctrl+Scroll zoom  ·  Ctrl+0 fit"
+        if self.multi:
+            hint = "[ ] switch image  ·  " + hint
         tk.Label(
-            right,
-            text="◀ ▶ or ← → step 0.01  ·  Shift ± 0.05  ·  Ctrl+Scroll zoom  ·  Ctrl+0 fit",
+            right, text=hint,
             bg=PANEL_BG, fg=MUTED, font=("Helvetica", 9, "italic"), anchor="e"
         ).pack(side="top", anchor="e", pady=(8, 0))
+
+    def _build_carousel(self, parent: tk.Misc) -> None:
+        row = tk.Frame(parent, bg=PANEL_BG)
+        row.pack(side="top", anchor="w", pady=(10, 0))
+
+        self._button(row, "◀", lambda: self.step_view(-1), font=("Helvetica", 12), padx=12).pack(side="left")
+
+        self.view_label = tk.Label(
+            row, text="", bg=PANEL_BG, fg=TEXT, font=("Helvetica", 10, "bold"),
+            width=32, anchor="w"
+        )
+        self.view_label.pack(side="left", padx=10)
+
+        self._button(row, "▶", lambda: self.step_view(1), font=("Helvetica", 12), padx=12).pack(side="left")
+
+        self.thumbnail_label = tk.Label(row, bg=PANEL_BG, bd=0)
+        self.thumbnail_label.pack(side="left", padx=(14, 0))
+        self._thumbnail_cache: dict[str, ImageTk.PhotoImage] = {}
+
+    def _build_legend(self, parent: tk.Misc) -> None:
+        self.legend_frame = tk.Frame(parent, bg=PANEL_BG)
+        self.legend_frame.pack(side="top", anchor="w", pady=(8, 0))
+
+        self.legend_labels: dict[str, tk.Label] = {}
+        shown = self.image_paths[:LEGEND_COLUMNS * LEGEND_MAX_ROWS]
+
+        for index, path in enumerate(shown):
+            cell = tk.Frame(self.legend_frame, bg=PANEL_BG, cursor="hand2")
+            cell.grid(row=index // LEGEND_COLUMNS, column=index % LEGEND_COLUMNS, sticky="w", padx=(0, 16))
+
+            swatch = tk.Label(cell, bg=self.colour_for(index), width=2, height=1, bd=0)
+            swatch.pack(side="left", padx=(0, 6))
+
+            text = tk.Label(
+                cell, text=f"{os.path.basename(path)} …", bg=PANEL_BG, fg=MUTED,
+                font=("Helvetica", 9), anchor="w"
+            )
+            text.pack(side="left")
+
+            for widget in (cell, swatch, text):
+                widget.bind("<Button-1>", lambda _e, i=index: self.set_view(i))
+
+            self.legend_labels[path] = text
+
+        hidden = len(self.image_paths) - len(shown)
+        if hidden > 0:
+            tk.Label(
+                self.legend_frame, text=f"+{hidden} more", bg=PANEL_BG, fg=MUTED,
+                font=("Helvetica", 9, "italic")
+            ).grid(row=LEGEND_MAX_ROWS, column=0, sticky="w", pady=(4, 0))
 
     def _bind_shortcuts(self) -> None:
         self.root.bind("<Return>", self.on_global_return)
@@ -197,6 +275,11 @@ class MatchPreviewWindow:
         self.root.bind("<Right>", lambda e: self._arrow_step(e, STEP))
         self.root.bind("<Shift-Left>", lambda e: self._arrow_step(e, -COARSE_STEP))
         self.root.bind("<Shift-Right>", lambda e: self._arrow_step(e, COARSE_STEP))
+
+        self.root.bind("<bracketleft>", lambda _: self.step_view(-1))
+        self.root.bind("<bracketright>", lambda _: self.step_view(1))
+        self.root.bind("<Prior>", lambda _: self.step_view(-1))
+        self.root.bind("<Next>", lambda _: self.step_view(1))
 
         self.root.bind("<Control-MouseWheel>", self.on_zoom_wheel)
         self.root.bind("<Control-Button-4>", lambda _: self.adjust_zoom(1.25))
@@ -209,57 +292,160 @@ class MatchPreviewWindow:
     # ------------------------------------------------------------ match pipeline
 
     def _run_analysis(self) -> None:
-        """Worker thread: the single expensive OpenCV correlation pass."""
-        try:
-            self._result_queue.put(ScreenMatcher(self.screen_bgr, self.image_path))
-        except Exception as e:  # noqa: BLE001 - report to the UI instead of stalling
-            print(f"[DEBUG ERROR] CV matching failure: {e}", file=sys.stderr)
-            self._result_queue.put(e)
+        """Worker thread: one correlation pass per image, posted as each finishes."""
+        for path in self.image_paths:
+            try:
+                self._result_queue.put((path, ScreenMatcher(self.screen_bgr, path)))
+            except Exception as e:  # noqa: BLE001 - report to the UI instead of stalling
+                print(f"[DEBUG ERROR] CV matching failure for {path}: {e}", file=sys.stderr)
+                self._result_queue.put((path, e))
 
     def _poll_analysis(self) -> None:
-        """Tk-side pump that picks the finished matcher up off the worker thread."""
-        try:
-            result = self._result_queue.get_nowait()
-        except queue.Empty:
+        """Tk-side pump that collects finished matchers off the worker thread."""
+        if self._closing:
+            return
+
+        arrived = False
+        while True:
+            try:
+                path, result = self._result_queue.get_nowait()
+            except queue.Empty:
+                break
+            self.matchers[path] = result
+            arrived = True
+
+        if arrived:
+            self.refresh_matches()
+
+        if not self._closing and len(self.matchers) < len(self.image_paths):
             self.root.after(50, self._poll_analysis)
-            return
-
-        if isinstance(result, Exception):
-            self.set_status(f"Match failed: {result}", "#ff6666")
-            return
-
-        self.matcher = result
-        if result.error:
-            self.set_status(result.error, "#ff6666")
-            return
-
-        self.refresh_matches()
 
     def refresh_matches(self) -> None:
-        """Re-filters the precomputed correlation peaks at the current similarity."""
-        if self.matcher is None or self.matcher.error:
+        """Re-filters every analysed image's correlation peaks at the current similarity."""
+        for path, matcher in self.matchers.items():
+            if isinstance(matcher, ScreenMatcher) and not matcher.error:
+                self.results[path] = matcher.matches_at(self.similarity)[0]
+            else:
+                self.results[path] = []
+
+        self._update_legend()
+        self._update_status()
+        self.request_render()
+
+    def _update_legend(self) -> None:
+        if not self.multi:
+            return
+        for path, label in self.legend_labels.items():
+            name = os.path.basename(path)
+            matcher = self.matchers.get(path)
+            if matcher is None:
+                label.config(text=f"{name} …", fg=MUTED)
+            elif isinstance(matcher, Exception) or matcher.error:
+                label.config(text=f"{name} — failed", fg="#ff6666")
+            else:
+                count = len(self.results.get(path, []))
+                label.config(text=f"{name} ({count})", fg=TEXT if count else MUTED)
+
+    def _update_status(self) -> None:
+        done = len(self.matchers)
+        total = len(self.image_paths)
+
+        if done < total:
+            self.set_status(f"Analyzing… {done} of {total} images", MUTED)
             return
 
-        self.cached_matches, _ = self.matcher.matches_at(self.similarity)
+        failed = [p for p in self.image_paths
+                  if isinstance(self.matchers.get(p), Exception) or
+                  (isinstance(self.matchers.get(p), ScreenMatcher) and self.matchers[p].error)]
 
-        count = len(self.cached_matches)
-        if count:
-            best = self.cached_matches[0]["score"]
-            plural = "" if count == 1 else "es"
-            self.set_status(f"{count} match{plural}  ·  best {best:.3f}  ·  green box is the match SikuliX would use", "#8fd98f")
+        if self.view == "all":
+            hits = sum(len(self.results.get(p, [])) for p in self.image_paths)
+            with_matches = sum(1 for p in self.image_paths if self.results.get(p))
+            if hits:
+                best_path = max(self.image_paths, key=lambda p: self.results.get(p, [{"score": 0}])[0]["score"]
+                                if self.results.get(p) else 0)
+                best = self.results[best_path][0]["score"]
+                text = (f"{hits} hit{'' if hits == 1 else 's'} across {with_matches} of {total} images"
+                        f"  ·  best {best:.3f} in {os.path.basename(best_path)}")
+                self.set_status(text, "#8fd98f")
+            else:
+                self.set_status("No matches at this similarity — lower the threshold", "#ffcc00")
         else:
-            self.set_status("No matches at this similarity — lower the threshold", "#ffcc00")
+            path = self.image_paths[self.view]
+            matcher = self.matchers.get(path)
+            if isinstance(matcher, Exception):
+                self.set_status(f"Match failed: {matcher}", "#ff6666")
+                return
+            if isinstance(matcher, ScreenMatcher) and matcher.error:
+                self.set_status(matcher.error, "#ff6666")
+                return
 
-        self.request_render()
+            matches = self.results.get(path, [])
+            if matches:
+                plural = "" if len(matches) == 1 else "es"
+                self.set_status(
+                    f"{len(matches)} match{plural}  ·  best {matches[0]['score']:.3f}"
+                    f"  ·  green box is the match SikuliX would use", "#8fd98f")
+            else:
+                self.set_status("No matches at this similarity — lower the threshold", "#ffcc00")
+
+        if failed:
+            self.status_label.config(text=self.status_label.cget("text") +
+                                     f"  ·  {len(failed)} image(s) failed")
 
     def set_status(self, text: str, colour: str = MUTED) -> None:
         self.status_label.config(text=text, fg=colour)
+
+    # -------------------------------------------------------------- image carousel
+
+    def set_view(self, view: str | int) -> None:
+        if view == self.view:
+            return
+        self.view = view
+        self._update_carousel_label()
+        self._update_status()
+        self.request_render()
+
+    def step_view(self, delta: int) -> None:
+        if not self.multi:
+            return
+        order: list[str | int] = ["all"] + list(range(len(self.image_paths)))
+        index = (order.index(self.view) + delta) % len(order)
+        self.set_view(order[index])
+
+    def _update_carousel_label(self) -> None:
+        if not self.multi:
+            return
+
+        if self.view == "all":
+            self.view_label.config(text=f"All  ·  {len(self.image_paths)} images")
+            self.thumbnail_label.config(image="")
+        else:
+            path = self.image_paths[self.view]
+            self.view_label.config(
+                text=f"{self.view + 1} / {len(self.image_paths)}  ·  {os.path.basename(path)}"
+            )
+            thumbnail = self._thumbnail(path)
+            self.thumbnail_label.config(image=thumbnail if thumbnail else "")
+
+    def _thumbnail(self, path: str) -> ImageTk.PhotoImage | None:
+        if path in self._thumbnail_cache:
+            return self._thumbnail_cache[path]
+        try:
+            image = Image.open(path).convert("RGB")
+            image.thumbnail(THUMBNAIL_MAX)
+            photo = ImageTk.PhotoImage(image, master=self.root)
+        except Exception as e:  # noqa: BLE001 - a preview thumbnail is not worth failing over
+            print(f"[DEBUG ERROR] Thumbnail failed for {path}: {e}", file=sys.stderr)
+            return None
+        self._thumbnail_cache[path] = photo
+        return photo
 
     # ------------------------------------------------------------------ rendering
 
     def request_render(self) -> None:
         """Coalesces redraws so a fast slider drag repaints once per frame."""
-        if self._render_job is not None:
+        if self._closing or self._render_job is not None:
             return
         self._render_job = self.root.after(16, self._do_render)
 
@@ -284,19 +470,10 @@ class MatchPreviewWindow:
             pil_img = self._scaled_screen().copy()
             draw = ImageDraw.Draw(pil_img)
 
-            for rank, m in enumerate(self.cached_matches):
-                x = int(m["x"] * self.scale_factor)
-                y = int(m["y"] * self.scale_factor)
-                w = max(int(m["w"] * self.scale_factor), 1)
-                h = max(int(m["h"] * self.scale_factor), 1)
-
-                is_best = rank == 0
-                colour = BEST_COLOUR if is_best else MATCH_COLOUR
-                draw.rectangle([x, y, x + w, y + h], outline=colour, width=3 if is_best else 2)
-
-                # Tiny boxes cannot carry a legible label; the best hit always gets one
-                if is_best or w >= MIN_LABEL_WIDTH:
-                    self._draw_label(draw, f"#{rank + 1}  {m['score']:.2f}", x, y, colour, pil_img.size)
+            if self.view == "all":
+                self._draw_all_images(draw, pil_img.size)
+            else:
+                self._draw_single_image(draw, pil_img.size)
 
             self.tk_render = ImageTk.PhotoImage(pil_img, master=self.canvas)
             self.canvas.delete("all")
@@ -305,6 +482,37 @@ class MatchPreviewWindow:
             self.update_scroll_region()
         except Exception as e:
             print(f"[DEBUG ERROR] Frame transformation mapping update dropped: {e}", file=sys.stderr)
+
+    def _draw_all_images(self, draw: ImageDraw.ImageDraw, bounds: tuple[int, int]) -> None:
+        """One colour per image; only each image's best hit is labelled to stay readable."""
+        for index, path in enumerate(self.image_paths):
+            colour = self.colour_for(index)
+            for rank, m in enumerate(self.results.get(path, [])):
+                x, y, w, h = self._scaled_box(m)
+                draw.rectangle([x, y, x + w, y + h], outline=colour, width=2)
+                if rank == 0:
+                    self._draw_label(draw, f"{m['score']:.2f}", x, y, colour, bounds)
+
+    def _draw_single_image(self, draw: ImageDraw.ImageDraw, bounds: tuple[int, int]) -> None:
+        path = self.image_paths[self.view]
+        for rank, m in enumerate(self.results.get(path, [])):
+            x, y, w, h = self._scaled_box(m)
+
+            is_best = rank == 0
+            colour = BEST_COLOUR if is_best else MATCH_COLOUR
+            draw.rectangle([x, y, x + w, y + h], outline=colour, width=3 if is_best else 2)
+
+            # Tiny boxes cannot carry a legible label; the best hit always gets one
+            if is_best or w >= MIN_LABEL_WIDTH:
+                self._draw_label(draw, f"#{rank + 1}  {m['score']:.2f}", x, y, colour, bounds)
+
+    def _scaled_box(self, match: dict[str, Any]) -> tuple[int, int, int, int]:
+        return (
+            int(match["x"] * self.scale_factor),
+            int(match["y"] * self.scale_factor),
+            max(int(match["w"] * self.scale_factor), 1),
+            max(int(match["h"] * self.scale_factor), 1),
+        )
 
     def _draw_label(
         self, draw: ImageDraw.ImageDraw, text: str, x: int, y: int, colour: str, bounds: tuple[int, int]
@@ -403,16 +611,24 @@ class MatchPreviewWindow:
     def save_and_exit(self) -> None:
         print(f"{self.similarity:.2f}")
         sys.stdout.flush()
-        self.root.destroy()
+        self._shutdown()
 
     def cancel_and_exit(self) -> None:
         """Closes without emitting a value, which the extension reads as a cancel."""
+        self._shutdown()
+
+    def _shutdown(self) -> None:
+        """Cancels pending callbacks before destroying, so none fire against a dead root."""
+        self._closing = True
+        if self._render_job is not None:
+            self.root.after_cancel(self._render_job)
+            self._render_job = None
         self.root.destroy()
 
 
-def run_match_preview(image_path: str, initial_sim: float) -> None:
+def run_match_preview(image_paths: list[str], initial_sim: float) -> None:
     screen_pil = take_freeze_frame()
     screen_bgr = cv2.cvtColor(np.array(screen_pil), cv2.COLOR_RGB2BGR)
 
-    app = MatchPreviewWindow(screen_bgr, image_path, initial_sim)
+    app = MatchPreviewWindow(screen_bgr, image_paths, initial_sim)
     app.root.mainloop()

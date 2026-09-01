@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { runPythonGui } from '../bridge/guiBridge';
+import { showError } from '../utils/output';
 
 /**
  * Command: sikuliVS.capture
@@ -39,7 +40,7 @@ export function registerCaptureCommand(context: vscode.ExtensionContext): void {
             insertTextAtCursor(editor, `"${imageName}"`);
 
         } catch (err) {
-            vscode.window.showErrorMessage(`SikuliVS Capture Error: ${err}`);
+            showError(`SikuliVS Capture Error: ${err}`);
         }
     });
 

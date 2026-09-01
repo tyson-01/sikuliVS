@@ -6,6 +6,7 @@ import { registerMatchCommand } from './commands/match';
 import { SikuliVSView } from './views/sikuliVSView';
 import { ImageHoverProvider } from './providers/imageHoverProvider';
 import { ImageCodeLensProvider } from './providers/imageCodeLensProvider';
+import { outputChannel } from './utils/output';
 
 // Target files for background features (Hover, CodeLens)
 const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language: 'python' };
@@ -15,6 +16,7 @@ const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language
  * Called automatically by VS Code when the activationEvents defined in package.json are triggered.
  */
 export function activate(context: vscode.ExtensionContext) {
+    context.subscriptions.push(outputChannel());
     registerCommands(context);
     registerViews(context);
     registerProviders(context);

@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { parsePatternExpr, renderPatternExpr } from '../utils/patternExpression';
+import { DEFAULT_SIMILARITY, parsePatternExpr, renderPatternExpr } from '../utils/patternExpression';
 import { pickImagePath, resolveImageAt } from '../utils/resolver';
 import { runPythonGui } from '../bridge/guiBridge';
-
-const DEFAULT_SIMILARITY = 0.7;
+import { showError } from '../utils/output';
 
 /**
  * Command: sikuliVS.offset
@@ -69,7 +68,7 @@ export function registerOffsetCommand(context: vscode.ExtensionContext): void {
                     renderPatternExpr(expr, { targetOffset: [dx, dy] }));
 
             } catch (err) {
-                vscode.window.showErrorMessage(`SikuliVS Offset Error: ${err}`);
+                showError(`SikuliVS Offset Error: ${err}`);
             }
         }
     );

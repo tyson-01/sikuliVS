@@ -26,7 +26,9 @@ Rather than a toggle for displaying image in-line within the code or the image p
 ### Dynamic image naming
 
 Dynamic image names resolve to every file they could stand for, so hover, Set Offset and
-Preview Match all work on templated filenames. All three formatting styles are covered:
+Preview Match all work on templated filenames. Match Preview overlays every variant at
+once, colour coded with a hit count per file, and `◀ ▶` isolates one at a time. All three
+formatting styles are covered:
 
 | Style | Example | Resolves |
 |---|---|---|

@@ -1,10 +1,10 @@
 import { strict as assert } from 'node:assert';
-import { test, describe } from 'node:test';
+import { test, describe, before, after } from 'node:test';
+import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { findImageRefs, findImageRefAt, imagePatternToRegExp, resolveImageFiles } from '../utils/imageResolver';
 import { parsePatternExpr, renderPatternExpr, PatternUpdates } from '../utils/patternExpression';
-
-const SCRIPT_DIR = path.join(__dirname, '../../test-proj/test-file.sikuli');
 
 // Mirrors the commands: rewrite only the Pattern expression's own range.
 function edit(line: string, updates: PatternUpdates, character = 0): string {
@@ -186,29 +186,45 @@ describe('filename pattern matching', () => {
     });
 });
 
-describe('resolving against the test project', () => {
-    const FIXTURE = 'test-file_1783709899.png';
+describe('resolving files on disk', () => {
+    const FILES = ['shot_12.png', 'shot_7.png', 'shot_ok.png', 'other.png'];
+    let dir: string;
 
-    test('static name resolves to the file on disk', () => {
-        const ref = findImageRefs(`click("${FIXTURE}")`)[0];
-        assert.equal(ref.isDynamic, false);
-        assert.deepEqual(resolveImageFiles(ref, SCRIPT_DIR).map(p => path.basename(p)), [FIXTURE]);
+    const namesFor = (line: string) =>
+        resolveImageFiles(findImageRefs(line)[0], dir).map(p => path.basename(p));
+
+    before(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sikulivs-'));
+        for (const name of FILES) {
+            fs.writeFileSync(path.join(dir, name), '');
+        }
     });
 
-    test('%d pattern resolves the numeric name', () => {
-        const ref = findImageRefs('click("test-file_%d.png" % n)')[0];
-        assert.equal(ref.isDynamic, true);
-        assert.deepEqual(resolveImageFiles(ref, SCRIPT_DIR).map(p => path.basename(p)), [FIXTURE]);
+    after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    test('a static name resolves to just that file', () => {
+        assert.deepEqual(namesFor('click("shot_ok.png")'), ['shot_ok.png']);
     });
 
-    test('f-string pattern resolves the same file', () => {
-        const ref = findImageRefs('click(f"test-file_{n}.png")')[0];
+    test('%s resolves every variant, which the match carousel previews together', () => {
+        assert.deepEqual(namesFor('click("shot_%s.png" % state)'), ['shot_12.png', 'shot_7.png', 'shot_ok.png']);
+    });
+
+    test('%d resolves only the numeric variants', () => {
+        assert.deepEqual(namesFor('click("shot_%d.png" % n)'), ['shot_12.png', 'shot_7.png']);
+    });
+
+    test('an f-string resolves the same set as %s', () => {
+        const ref = findImageRefs('click(f"shot_{state}.png")')[0];
         assert.equal(ref.kind, 'fstring');
-        assert.deepEqual(resolveImageFiles(ref, SCRIPT_DIR).map(p => path.basename(p)), [FIXTURE]);
+        assert.deepEqual(namesFor('click(f"shot_{state}.png")'), ['shot_12.png', 'shot_7.png', 'shot_ok.png']);
+    });
+
+    test('.format() resolves the same set as %s', () => {
+        assert.deepEqual(namesFor('click("shot_{}.png".format(state))'), ['shot_12.png', 'shot_7.png', 'shot_ok.png']);
     });
 
     test('a name with no file on disk resolves to nothing', () => {
-        const ref = findImageRefs('click("missing.png")')[0];
-        assert.deepEqual(resolveImageFiles(ref, SCRIPT_DIR), []);
+        assert.deepEqual(namesFor('click("missing.png")'), []);
     });
 });

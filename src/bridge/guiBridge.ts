@@ -1,5 +1,6 @@
 import { execFile } from 'child_process';
 import * as path from 'path';
+import { log } from '../utils/output';
 
 /**
  * Executes the background Python GUI sidecar process and awaits its stdout.
@@ -16,7 +17,7 @@ export function runPythonGui(action: string, args: string[] = []): Promise<strin
 
         execFile(pythonPath, argv, { cwd: rootDir }, (error, stdout, stderr) => {
             if (stderr) {
-                console.warn(`[SikuliVS Python]\n${stderr}`);
+                log(`[${action}]\n${stderr.trimEnd()}`);
             }
 
             if (error) {

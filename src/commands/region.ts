@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { runPythonGui } from '../bridge/guiBridge';
+import { showError } from '../utils/output';
 
 /**
  * Command: sikuliVS.region
@@ -32,7 +33,7 @@ export function registerRegionCommand(context: vscode.ExtensionContext): void {
             insertTextAtCursor(editor, `Region(${x}, ${y}, ${w}, ${h})`);
 
         } catch (err) {
-            vscode.window.showErrorMessage(`SikuliVS Region Error: ${err}`);
+            showError(`SikuliVS Region Error: ${err}`);
         }
     });
 

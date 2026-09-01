@@ -143,5 +143,48 @@ class TestDegenerateInput(unittest.TestCase):
             self.assertTrue(any((m["x"], m["y"]) == (60, 50) for m in matcher.matches_at(0.9)[0]))
 
 
+class TestMultipleImages(unittest.TestCase):
+    """One screen analysed against several templates, as the match carousel does."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+        rng = np.random.default_rng(3)
+        self.screen = cv2.GaussianBlur((rng.random((720, 1280, 3)) * 255).astype(np.uint8), (21, 21), 0)
+
+        self.paths = {}
+        self.spots = {"a": [(100, 100), (600, 400)], "b": [(900, 200)], "c": []}
+        for name, spots in self.spots.items():
+            patch = np.zeros((24, 40, 3), np.uint8)
+            patch[:, :] = {"a": (220, 40, 40), "b": (40, 220, 40), "c": (40, 40, 220)}[name]
+            patch[6:18, 10:30] = 255
+            path = os.path.join(self.tmp.name, f"{name}.png")
+            cv2.imwrite(path, patch)
+            self.paths[name] = path
+            for x, y in spots:
+                self.screen[y:y + 24, x:x + 40] = patch
+
+    def test_each_image_reports_only_its_own_hits(self):
+        for name, path in self.paths.items():
+            matches, _ = ScreenMatcher(self.screen, path).matches_at(0.9)
+            found = sorted((m["x"], m["y"]) for m in matches)
+            self.assertEqual(found, sorted(self.spots[name]), f"wrong hits for {name}.png")
+
+    def test_an_unmatched_image_does_not_suppress_the_others(self):
+        results = {n: ScreenMatcher(self.screen, p).matches_at(0.9)[0] for n, p in self.paths.items()}
+        self.assertEqual(len(results["a"]), 2)
+        self.assertEqual(len(results["b"]), 1)
+        self.assertEqual(len(results["c"]), 0)
+
+    def test_one_unreadable_image_leaves_the_rest_usable(self):
+        matchers = {n: ScreenMatcher(self.screen, p) for n, p in self.paths.items()}
+        matchers["missing"] = ScreenMatcher(self.screen, os.path.join(self.tmp.name, "nope.png"))
+
+        self.assertIsNotNone(matchers["missing"].error)
+        self.assertIsNone(matchers["a"].error)
+        self.assertEqual(len(matchers["a"].matches_at(0.9)[0]), 2)
+
+
 if __name__ == "__main__":
     unittest.main()

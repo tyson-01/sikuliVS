@@ -24,6 +24,9 @@ export interface PatternUpdates {
 const SIMILAR = 'similar';
 const TARGET_OFFSET = 'targetOffset';
 
+// SikuliX's own Settings.MinSimilarity
+export const DEFAULT_SIMILARITY = 0.7;
+
 /**
  * Parses the Pattern expression that an image reference belongs to, keeping the whole
  * modifier chain so unrecognised modifiers survive a rewrite.
