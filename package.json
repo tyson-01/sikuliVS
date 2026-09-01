@@ -32,6 +32,11 @@
         "command": "sikuliVS.match",
         "title": "SikuliVS: Preview Matches",
         "icon": "$(eye)"
+      },
+      {
+        "command": "sikuliVS.highlight",
+        "title": "SikuliVS: Highlight Region",
+        "icon": "$(sparkle)"
       }
     ],
     "viewsContainers": {

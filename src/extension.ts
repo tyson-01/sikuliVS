@@ -3,9 +3,11 @@ import { registerRegionCommand } from './commands/region';
 import { registerCaptureCommand } from './commands/capture';
 import { registerOffsetCommand } from './commands/offset';
 import { registerMatchCommand } from './commands/match';
+import { registerHighlightCommand } from './commands/highlight';
 import { SikuliVSView } from './views/sikuliVSView';
 import { ImageHoverProvider } from './providers/imageHoverProvider';
 import { ImageCodeLensProvider } from './providers/imageCodeLensProvider';
+import { RegionCodeLensProvider } from './providers/regionCodeLensProvider';
 import { outputChannel } from './utils/output';
 
 // Target files for background features (Hover, CodeLens)
@@ -28,6 +30,7 @@ function registerCommands(context: vscode.ExtensionContext): void {
     registerCaptureCommand(context);
     registerOffsetCommand(context);
     registerMatchCommand(context);
+    registerHighlightCommand(context);
 }
 
 // Custom UI panels rendered in the sidebar
@@ -42,7 +45,8 @@ function registerViews(context: vscode.ExtensionContext): void {
 function registerProviders(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.languages.registerHoverProvider(PYTHON_FILE_SELECTOR, new ImageHoverProvider()),
-        vscode.languages.registerCodeLensProvider(PYTHON_FILE_SELECTOR, new ImageCodeLensProvider())
+        vscode.languages.registerCodeLensProvider(PYTHON_FILE_SELECTOR, new ImageCodeLensProvider()),
+        vscode.languages.registerCodeLensProvider(PYTHON_FILE_SELECTOR, new RegionCodeLensProvider())
     );
 }
 

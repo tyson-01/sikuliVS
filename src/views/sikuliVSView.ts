@@ -12,10 +12,11 @@ export class SikuliVSView implements vscode.TreeDataProvider<SikuliItem> {
 
     async getChildren(): Promise<SikuliItem[]> {
         return [
-            new SikuliItem('📐 Create Region', 'sikuliVS.region', 'screen-full'),
-            new SikuliItem('📸 Capture Image', 'sikuliVS.capture', 'device-camera'),
-            new SikuliItem('🎯 Set Target Offset', 'sikuliVS.offset', 'target'),
-            new SikuliItem('🔍 Preview Matches', 'sikuliVS.match', 'eye')
+            new SikuliItem('📐 Region Capture', 'sikuliVS.region', 'screen-full'),
+            new SikuliItem('✨ Region Highlight ', 'sikuliVS.highlight', 'sparkle'),
+            new SikuliItem('📸 Image Capture', 'sikuliVS.capture', 'device-camera'),
+            new SikuliItem('🎯 Image Set Target Offset', 'sikuliVS.offset', 'target'),
+            new SikuliItem('🔍 Image Preview Matches', 'sikuliVS.match', 'eye')
         ];
     }
 }

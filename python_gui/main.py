@@ -4,13 +4,17 @@ from typing import NoReturn
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="SikuliVS GUI Engine")
-    parser.add_argument('--action', choices=['region', 'capture', 'offset', 'match'], required=True)
+    parser.add_argument('--action', choices=['region', 'capture', 'offset', 'match', 'highlight'], required=True)
     parser.add_argument('--out', type=str, help="Output destination path for file captures.")
     parser.add_argument('--image', type=str, help="Target image path for offset configurations.")
     parser.add_argument('--images', type=str, nargs='+', help="Target image paths for match preview.")
     parser.add_argument('--dx', type=int, default=0, help="Initial X offset value context.")
     parser.add_argument('--dy', type=int, default=0, help="Initial Y offset value context.")
     parser.add_argument('--similarity', type=float, default=0.7, help="Initial similarity evaluation threshold.")
+    parser.add_argument('--x', type=int, help="Region X bound for the highlight action.")
+    parser.add_argument('--y', type=int, help="Region Y bound for the highlight action.")
+    parser.add_argument('--w', type=int, help="Region width for the highlight action.")
+    parser.add_argument('--h', type=int, help="Region height for the highlight action.")
     args = parser.parse_args()
 
     # Route the actions to their respective handlers
@@ -34,6 +38,13 @@ def main() -> None:
         validate_required_arg(images, "--images path(s) required for match action.")
         from previewers.match_ui import run_match_preview
         run_match_preview(images, args.similarity)
+
+    elif args.action == 'highlight':
+        if None in (args.x, args.y, args.w, args.h):
+            print("Error: --x --y --w --h required for highlight action.", file=sys.stderr)
+            sys.exit(1)
+        from gui_selectors.highlight import run_highlight
+        run_highlight(args.x, args.y, args.w, args.h)
 
 def validate_required_arg(arg_value: str | list[str] | None, error_message: str) -> None | NoReturn:
     """Safely asserts an argument is present, printing to stderr and exiting on failure."""
