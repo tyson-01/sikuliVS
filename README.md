@@ -13,7 +13,7 @@ This extension provides an inline VS Code/VSCodium workflow for writing SikuliX 
 | **Region** | Click and drag anywhere on your display to instantly inject native `Region(x, y, w, h)` coordinate snippets directly at your cursor position. |
 | **Capture** | Take an on-screen snapshot. The tool looks backward on your current line for a variable assignment (e.g. `target_img =`) and titles the file dynamically (`scriptName_target_login.png`) before inserting the string filename at the cursor. If no variable is found, it falls back to a Unix timestamp for the image name. |
 | **Offset** | Parses an existing image reference and offset from your active code line, launching an interactive crosshair over the asset to calculate mouse `[dx, dy]` targets. Confirming a point updates your line configuration in-place. |
-| **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. |
+| **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. Every hit is boxed and labelled with its true score; the strongest hit (the one SikuliX itself would act on) is boxed in green. |
 
 ## Differences from the Sikuli IDE / Quality of Life Features
 
@@ -36,7 +36,6 @@ Currently does not replace all Sikuli IDE functions.
 
 ## Known Bugs
 
-- **Match:** Just sort of broken, matching doesn't accurately show all legitimate matches in current capture. I'll fix this next.
 - **???:** Probably a bunch of stuff.
 
 ## How to Run and Test
