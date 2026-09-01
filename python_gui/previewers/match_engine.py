@@ -5,8 +5,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-# Ceiling on how many candidate peaks are kept, so that dragging the similarity to
-# zero over a large flat desktop cannot blow up the suppression pass.
+# Ceilings that bound the search at very low similarity thresholds.
 MAX_CANDIDATES = 100_000
 MAX_MATCHES = 200
 
@@ -32,10 +31,8 @@ def load_template(image_path: str) -> np.ndarray | None:
 class ScreenMatcher:
     """Correlates one template against one frozen screen frame.
 
-    The correlation surface depends only on the screen and the template, never on the
-    similarity threshold, so the expensive OpenCV pass runs exactly once at construction.
-    Re-tuning similarity afterwards only re-filters a small precomputed peak list, which
-    is what makes the preview window able to update interactively.
+    The correlation surface does not depend on the similarity threshold, so the OpenCV
+    pass runs once at construction and re-tuning only re-filters the precomputed peaks.
     """
 
     def __init__(self, screen_bgr: np.ndarray, image_path: str):
@@ -70,11 +67,9 @@ class ScreenMatcher:
     def _score_map(screen_bgr: np.ndarray, template_bgr: np.ndarray) -> np.ndarray:
         """Builds a correlation surface where 1.0 is a perfect hit and 0.0 is no relation.
 
-        Matching runs on colour data the way SikuliX does; greyscale collapses distinctly
-        coloured widgets onto the same luminance and invents matches that are not there.
+        Matches on colour data the way SikuliX does.
         """
-        # A flat single-colour template has zero variance, which makes the normalized
-        # correlation coefficient divide by zero. Squared-difference stays well defined.
+        # A flat template has zero variance, which divides by zero in TM_CCOEFF_NORMED
         if float(template_bgr.std()) < 1e-6:
             res = 1.0 - cv2.matchTemplate(screen_bgr, template_bgr, cv2.TM_SQDIFF_NORMED)
         else:
@@ -85,10 +80,8 @@ class ScreenMatcher:
     def _collect_peaks(self, res: np.ndarray) -> None:
         """Reduces the score surface to local maxima, sorted strongest first.
 
-        Every pixel of a real hit scores highly, so a plain threshold sweep returns one
-        candidate per pixel of every hit (millions of them on a 4K screen at a low
-        threshold). Keeping only points that lead their template sized neighbourhood
-        cuts that down to roughly one candidate per genuine hit.
+        Every pixel of a hit scores highly, so keeping only points that lead their
+        template sized neighbourhood gives roughly one candidate per genuine hit.
         """
         kernel = np.ones(
             (max(self.height // 2 * 2 + 1, 3), max(self.width // 2 * 2 + 1, 3)), np.uint8
@@ -96,6 +89,7 @@ class ScreenMatcher:
         mask = res >= cv2.dilate(res, kernel) - 1e-6
 
         if int(np.count_nonzero(mask)) > MAX_CANDIDATES:
+            # Raise the bar to the score of the MAX_CANDIDATES'th best peak
             peak_scores = res[mask]
             kth = peak_scores.size - MAX_CANDIDATES
             mask &= res >= float(np.partition(peak_scores, kth)[kth])
@@ -116,8 +110,7 @@ class ScreenMatcher:
         Returns the matches ordered best first, plus the centre of the single strongest
         one, which is the hit SikuliX itself would act on.
         """
-        # Scores are sorted descending, so everything at or above the threshold is a
-        # prefix; searchsorted on the negated view finds where that prefix ends.
+        # Scores are sorted descending, so hits above the threshold form a prefix
         cutoff = int(np.searchsorted(-self._scores, -threshold, side="right"))
         if cutoff == 0:
             return [], None
@@ -143,8 +136,7 @@ class ScreenMatcher:
                 }
             )
 
-            # A peak whose corner lands within half a template of an accepted hit
-            # overlaps it by more than 50% on both axes: same hit, weaker reading.
+            # A corner within half a template overlaps by >50% on both axes: same hit
             claimed[max(y - pad_y, 0):y + pad_y + 1, max(x - pad_x, 0):x + pad_x + 1] = True
 
             if len(matches) >= max_matches:

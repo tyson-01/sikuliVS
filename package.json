@@ -57,7 +57,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test:unit": "npm run compile && node --test out/test/*.spec.js",
+    "test:python": "./.venv/bin/python3 -m unittest discover -s python_gui/tests"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",

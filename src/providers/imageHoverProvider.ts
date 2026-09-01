@@ -1,13 +1,13 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { resolveImageFromLine } from '../utils/resolver';
+import { resolveImageAt } from '../utils/resolver';
 
 /**
- * Custom hover provider that listens for mouse hovers over lines containing image strings.
+ * Custom hover provider that listens for mouse hovers over image strings.
  * Renders an inline Markdown popup previewing the corresponding screenshot(s).
  */
 export class ImageHoverProvider implements vscode.HoverProvider {
-    
+
     public async provideHover(
         document: vscode.TextDocument,
         position: vscode.Position,
@@ -16,7 +16,7 @@ export class ImageHoverProvider implements vscode.HoverProvider {
         const lineText = document.lineAt(position.line).text;
         const scriptDir = path.dirname(document.uri.fsPath);
 
-        const resolved = resolveImageFromLine(lineText, scriptDir);
+        const resolved = resolveImageAt(lineText, scriptDir, position.character);
         if (!resolved || resolved.absolutePaths.length === 0) {
             return null;
         }
@@ -37,9 +37,8 @@ export class ImageHoverProvider implements vscode.HoverProvider {
         } else {
             // Case 2: Render a multi-image list overlay capped at a max of 5 elements
             markdown.appendMarkdown(`### 🔍 Multiple Matches Found (${totalMatches})\n\n`);
-            
-            const visiblePaths = resolved.absolutePaths.slice(0, 5);
-            for (const absolutePath of visiblePaths) {
+
+            for (const absolutePath of resolved.absolutePaths.slice(0, 5)) {
                 const targetUri = vscode.Uri.file(absolutePath).toString();
                 markdown.appendMarkdown(`---\n`);
                 markdown.appendMarkdown(`![Preview](${targetUri})\n\n`);
@@ -51,6 +50,7 @@ export class ImageHoverProvider implements vscode.HoverProvider {
             }
         }
 
-        return new vscode.Hover(markdown);
+        const range = new vscode.Range(position.line, resolved.ref.start, position.line, resolved.ref.end);
+        return new vscode.Hover(markdown, range);
     }
 }

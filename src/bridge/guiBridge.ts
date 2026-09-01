@@ -1,43 +1,30 @@
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import * as path from 'path';
 
-export interface GuiResponse {
-    x?: number;
-    y?: number;
-    width?: number;
-    height?: number;
-    path?: string;
-}
-
 /**
- * Executes the background Python GUI sidecar process, passes operational flags, 
- * and awaits stdout string data responses.
+ * Executes the background Python GUI sidecar process and awaits its stdout.
+ * Resolves null when the tool exits cleanly with no output, which is how the GUIs
+ * signal a cancel. Rejects only on failure.
  */
-export function runPythonGui(action: string, extraArgs: string[] = []): Promise<string> {
+export function runPythonGui(action: string, args: string[] = []): Promise<string | null> {
     return new Promise((resolve, reject) => {
         const rootDir = path.join(__dirname, '../../');
         const scriptPath = path.join(rootDir, 'python_gui/main.py');
         const pythonPath = path.join(rootDir, '.venv/bin/python3');
-        
-        // Combine action and incoming extra arguments with spaces so the shell parses them correctly
-        const argsList = [`--action ${action}`, ...extraArgs];
-        const args = argsList.join(' ');
-        
-        exec(`"${pythonPath}" "${scriptPath}" ${args}`, (error, stdout, stderr) => {
+
+        const argv = [scriptPath, '--action', action, ...args];
+
+        execFile(pythonPath, argv, { cwd: rootDir }, (error, stdout, stderr) => {
             if (stderr) {
-                console.warn(`[Python Backtrace / Logs]:\n${stderr}`);
+                console.warn(`[SikuliVS Python]\n${stderr}`);
             }
 
             if (error) {
-                return reject(stderr.trim() || 'Process closed or cancelled.');
+                return reject(new Error(stderr.trim() || error.message));
             }
 
             const output = stdout.trim();
-            if (!output) {
-                return reject('Cancelled');
-            }
-
-            resolve(output);
+            resolve(output === '' ? null : output);
         });
     });
 }

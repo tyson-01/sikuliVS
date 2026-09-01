@@ -25,7 +25,23 @@ Rather than a toggle for displaying image in-line within the code or the image p
 
 ### Dynamic image naming
 
-Using Jython 2.7 dynamic images (e.g. `("my_script_my_img_%s.png" % my_var)` or `.format()` style) can dynamically look up all possible images.
+Dynamic image names resolve to every file they could stand for, so hover, Set Offset and
+Preview Match all work on templated filenames. All three formatting styles are covered:
+
+| Style | Example | Resolves |
+|---|---|---|
+| `%` formatting | `"btn_%s.png" % state` | any suffix |
+| | `"btn_%03d.png" % n` | digits only |
+| | `"btn_%(name)s.png" % d` | any suffix |
+| `.format()` | `"btn_{}.png".format(state)` | any suffix |
+| | `"btn_{n:03d}.png".format(n=1)` | digits only |
+| f-string | `f"btn_{state}.png"` | any suffix |
+
+Integer conversions narrow the search to digits, so `btn_%d.png` will not pick up
+`btn_cancel.png`. `%%`, `{{` and `}}` are treated as literals.
+
+> **Note:** Jython 2.7 has no f-strings. Use `%` or `.format()` unless you run your
+> scripts on SikuliX's Python 3 execution path.
 
 ## Limitations / Future Work
 
@@ -65,7 +81,16 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Launch the Debugger
+### 3. Run the Tests
+
+Both suites run from the terminal without the extension host.
+
+```bash
+npm run test:unit      # image reference and Pattern expression parsing
+npm run test:python    # OpenCV template matching engine
+```
+
+### 4. Launch the Debugger
 
 1. Open the **sikuliVS** project root folder in VS Code.
 2. Press **F5** (or navigate to the **Run and Debug** panel and select **Launch Extension**).

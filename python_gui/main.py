@@ -25,7 +25,7 @@ def main() -> None:
     elif args.action == 'offset':
         validate_required_arg(args.image, "--image path required for offset action.")
         from gui_selectors.offset import run_offset
-        run_offset(args.image, args.dx, args.dy)
+        run_offset(args.image, args.dx, args.dy, args.similarity)
         
     elif args.action == 'match':
         validate_required_arg(args.image, "--image path required for match action.")

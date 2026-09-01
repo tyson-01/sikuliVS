@@ -236,6 +236,6 @@ class OffsetWindow:
         sys.stdout.flush()
         self.root.destroy()
 
-def run_offset(image_path: str, init_dx: int, init_dy: int) -> None:
-    app = OffsetWindow(image_path, init_dx, init_dy, similarity_threshold=0.7)
+def run_offset(image_path: str, init_dx: int, init_dy: int, similarity: float = 0.7) -> None:
+    app = OffsetWindow(image_path, init_dx, init_dy, similarity_threshold=similarity)
     app.root.mainloop()

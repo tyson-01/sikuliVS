@@ -4,7 +4,7 @@ import { runPythonGui } from '../bridge/guiBridge';
 
 /**
  * Command: sikuliVS.capture
- * Triggers a Python GUI to capture a screen region, automatically naming the 
+ * Triggers a Python GUI to capture a screen region, automatically naming the
  * resulting image based on the active script directory and current line variable.
  */
 export function registerCaptureCommand(context: vscode.ExtensionContext): void {
@@ -25,16 +25,21 @@ export function registerCaptureCommand(context: vscode.ExtensionContext): void {
             const absoluteOutputPath = path.join(fileDir, imageName);
 
             // 3. Launch external Python GUI tool to take the screenshot
-            const result = await runPythonGui('capture', [`--out "${absoluteOutputPath}"`]);
+            const result = await runPythonGui('capture', ['--out', absoluteOutputPath]);
+            if (result === null) {
+                return; // User cancelled the snip
+            }
+
+            if (result !== 'SUCCESS') {
+                vscode.window.showErrorMessage('SikuliVS: Backend capture failed.');
+                return;
+            }
 
             // 4. Inject the final string into the editor on success
-            if (result === 'SUCCESS') {
-                insertTextAtCursor(editor, `"${imageName}"`);
-            } else {
-                vscode.window.showErrorMessage('SikuliVS: Backend capture failed.');
-            }
+            insertTextAtCursor(editor, `"${imageName}"`);
+
         } catch (err) {
-            vscode.window.showErrorMessage(`SikuliVS Error: ${err}`);
+            vscode.window.showErrorMessage(`SikuliVS Capture Error: ${err}`);
         }
     });
 
@@ -47,15 +52,14 @@ export function registerCaptureCommand(context: vscode.ExtensionContext): void {
  */
 function determineImageName(editor: vscode.TextEditor, scriptName: string): string {
     const currentLineText = editor.document.lineAt(editor.selection.active.line).text;
-    
     const variableMatch = currentLineText.match(/^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*=/);
 
     if (variableMatch) {
-        return `${scriptName}_${variableMatch[1]}.png`; // Regex name
+        return `${scriptName}_${variableMatch[1]}.png`;
     }
 
     const timestamp = Math.floor(Date.now() / 1000);
-    return `${scriptName}_${timestamp}.png`; // Fallback name
+    return `${scriptName}_${timestamp}.png`;
 }
 
 /**
@@ -63,7 +67,6 @@ function determineImageName(editor: vscode.TextEditor, scriptName: string): stri
  */
 function insertTextAtCursor(editor: vscode.TextEditor, text: string): void {
     editor.edit((editBuilder) => {
-        const position = editor.selection.active;
-        editBuilder.insert(position, text);
+        editBuilder.insert(editor.selection.active, text);
     });
 }

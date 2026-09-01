@@ -17,20 +17,22 @@ export function registerRegionCommand(context: vscode.ExtensionContext): void {
 
             // 1. Request raw coordinate string from Python backend (e.g., "100,150,400,300")
             const rawOutput = await runPythonGui('region');
-            
-            if (!rawOutput || rawOutput.trim() === '') {
-                // User canceled
-                return;
+            if (rawOutput === null) {
+                return; // User cancelled the selection
             }
 
             // 2. Parse coordinates and format the Sikuli script snippet
-            const regionText = parseAndFormatRegion(rawOutput);
+            const [x, y, w, h] = rawOutput.split(',').map(Number);
+            if ([x, y, w, h].some(isNaN)) {
+                vscode.window.showErrorMessage('SikuliVS: Backend returned invalid region coordinates.');
+                return;
+            }
 
             // 3. Inject the formatted string into the active document
-            insertTextAtCursor(editor, regionText);
+            insertTextAtCursor(editor, `Region(${x}, ${y}, ${w}, ${h})`);
 
         } catch (err) {
-            vscode.window.showErrorMessage(`SikuliVS Error: ${err}`);
+            vscode.window.showErrorMessage(`SikuliVS Region Error: ${err}`);
         }
     });
 
@@ -38,20 +40,10 @@ export function registerRegionCommand(context: vscode.ExtensionContext): void {
 }
 
 /**
- * Takes a comma-separated coordinate string from the backend and turns it 
- * into a Sikuli code snippet: "Region(x, y, w, h)"
- */
-function parseAndFormatRegion(rawData: string): string {
-    const [x, y, w, h] = rawData.split(',').map(Number);
-    return `Region(${x}, ${y}, ${w}, ${h})`;
-}
-
-/**
  * Helper to safely mutate the active text document and insert text at the cursor position.
  */
 function insertTextAtCursor(editor: vscode.TextEditor, text: string): void {
     editor.edit((editBuilder) => {
-        const position = editor.selection.active;
-        editBuilder.insert(position, text);
+        editBuilder.insert(editor.selection.active, text);
     });
 }

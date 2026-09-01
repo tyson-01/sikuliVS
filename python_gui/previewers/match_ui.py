@@ -19,7 +19,7 @@ ACCENT = "#007acc"
 TEXT = "#ffffff"
 MUTED = "#aaaaaa"
 
-BEST_COLOUR = "#00e05a"   # The hit SikuliX would actually act on
+BEST_COLOUR = "#00e05a"   # The hit SikuliX would act on
 MATCH_COLOUR = "#ff3333"  # Every other hit above the threshold
 
 STEP = 0.01
@@ -28,7 +28,7 @@ MIN_LABEL_WIDTH = 26  # Below this on-screen box width, score labels become unre
 
 
 def _load_font(size: int) -> Any:
-    """Best available font at a usable size; PIL's bitmap default is otherwise tiny."""
+    """Best available font at a usable size."""
     for name in ("DejaVuSans.ttf", "NotoSans-Regular.ttf", "LiberationSans-Regular.ttf"):
         try:
             return ImageFont.truetype(name, size)
@@ -48,14 +48,12 @@ class MatchPreviewWindow:
 
         self.orig_h, self.orig_w = screen_bgr.shape[:2]
 
-        # The correlation pass is expensive and threshold independent, so it runs once
-        # on a worker thread. Everything after that is just re-filtering its output.
+        # The correlation pass is threshold independent, so it runs once on a worker thread
         self.matcher: ScreenMatcher | None = None
         self.cached_matches: list[dict[str, Any]] = []
         self._result_queue: queue.Queue[ScreenMatcher | Exception] = queue.Queue()
 
-        # Guards against Entry <-> Scale write-backs re-triggering each other, and
-        # against a burst of drag events queueing up one full redraw each.
+        # Guards Entry <-> Scale write-backs, and coalesces redraws during a drag
         self._syncing = False
         self._render_job: str | None = None
 
@@ -82,8 +80,7 @@ class MatchPreviewWindow:
         self.scale_factor = self.fit_scale
 
         # 3. Workspace Layout Architecture Setup
-        # The control panel is packed first so a cramped window steals space from the
-        # image instead of clipping the controls off the bottom edge.
+        # Packed first so a cramped window shrinks the image instead of the controls
         self.control_panel = tk.Frame(
             self.root, bg=PANEL_BG, padx=14, pady=10,
             highlightthickness=1, highlightbackground=BORDER
@@ -114,8 +111,7 @@ class MatchPreviewWindow:
         self._build_controls()
         self._bind_shortcuts()
 
-        # 4. Paint the screenshot immediately, then analyse in the background so the
-        # window is on screen and responsive while OpenCV works.
+        # 4. Paint the screenshot immediately, then analyse in the background
         self.request_render()
         self.set_status("Analyzing screen…", MUTED)
         threading.Thread(target=self._run_analysis, daemon=True).start()
@@ -165,8 +161,7 @@ class MatchPreviewWindow:
         )
         self.sim_entry.pack(side="left", padx=(14, 0), ipady=4)
 
-        # Commit typed values on Enter or when focus leaves; validating on every
-        # keystroke would re-match on the transient "0" of a value like "0.85".
+        # Commit on Enter or focus loss, not on every keystroke
         self.sim_entry.bind("<Return>", self.on_entry_return)
         self.sim_entry.bind("<KP_Enter>", self.on_entry_return)
         self.sim_entry.bind("<FocusOut>", self.on_entry_commit)
@@ -217,7 +212,7 @@ class MatchPreviewWindow:
         """Worker thread: the single expensive OpenCV correlation pass."""
         try:
             self._result_queue.put(ScreenMatcher(self.screen_bgr, self.image_path))
-        except Exception as e:  # noqa: BLE001 - must reach the UI rather than hang it
+        except Exception as e:  # noqa: BLE001 - report to the UI instead of stalling
             print(f"[DEBUG ERROR] CV matching failure: {e}", file=sys.stderr)
             self._result_queue.put(e)
 
@@ -241,11 +236,7 @@ class MatchPreviewWindow:
         self.refresh_matches()
 
     def refresh_matches(self) -> None:
-        """Re-filters the precomputed correlation peaks at the current similarity.
-
-        This is the only work a similarity change causes: sub-millisecond, because the
-        matching itself already ran once when the window opened.
-        """
+        """Re-filters the precomputed correlation peaks at the current similarity."""
         if self.matcher is None or self.matcher.error:
             return
 
@@ -267,7 +258,7 @@ class MatchPreviewWindow:
     # ------------------------------------------------------------------ rendering
 
     def request_render(self) -> None:
-        """Coalesces redraws so a fast slider drag repaints once, not once per event."""
+        """Coalesces redraws so a fast slider drag repaints once per frame."""
         if self._render_job is not None:
             return
         self._render_job = self.root.after(16, self._do_render)
@@ -304,7 +295,6 @@ class MatchPreviewWindow:
                 draw.rectangle([x, y, x + w, y + h], outline=colour, width=3 if is_best else 2)
 
                 # Tiny boxes cannot carry a legible label; the best hit always gets one
-                # so there is at least one score on screen at any zoom level.
                 if is_best or w >= MIN_LABEL_WIDTH:
                     self._draw_label(draw, f"#{rank + 1}  {m['score']:.2f}", x, y, colour, pil_img.size)
 
@@ -354,7 +344,7 @@ class MatchPreviewWindow:
     # ----------------------------------------------------------- similarity input
 
     def set_similarity(self, value: float) -> None:
-        """Single funnel for every similarity change, whatever widget triggered it."""
+        """Single entry point for a similarity change from any widget."""
         value = round(min(max(value, 0.0), 1.0), 2)
         if abs(value - self.similarity) < 1e-9:
             return
@@ -372,8 +362,7 @@ class MatchPreviewWindow:
         self.set_similarity(self.similarity + delta)
 
     def _arrow_step(self, event: tk.Event, delta: float) -> str | None:
-        # Arrow keys belong to the caret in the entry box, and tk.Scale already steps
-        # itself by one resolution unit when it holds focus.
+        # The entry caret and tk.Scale both handle arrows themselves when focused
         if event.widget in (self.sim_entry, self.slider):
             return None
         self.step_similarity(delta)
@@ -385,7 +374,7 @@ class MatchPreviewWindow:
         self.set_similarity(float(val))
 
     def on_entry_commit(self, _event: tk.Event | None = None) -> None:
-        """Applies a typed value, snapping bad input back to the live threshold."""
+        """Applies a typed value, snapping bad input back to the current threshold."""
         try:
             self.set_similarity(float(self.sim_text_var.get()))
         except ValueError:
@@ -393,7 +382,7 @@ class MatchPreviewWindow:
         self.sim_text_var.set(f"{self.similarity:.2f}")
 
     def on_entry_return(self, event: tk.Event) -> str:
-        """Enter applies the typed value and releases focus, so a second Enter saves."""
+        """Applies the typed value and releases focus, so a second Enter saves."""
         self.on_entry_commit(event)
         self.canvas.focus_set()
         return "break"
@@ -406,7 +395,7 @@ class MatchPreviewWindow:
     # ----------------------------------------------------------------------- exit
 
     def on_global_return(self, event: tk.Event) -> None:
-        # Enter inside the entry box means "apply what I typed", not "close the window".
+        # Enter inside the entry box applies the value instead of closing
         if event.widget is self.sim_entry:
             return
         self.save_and_exit()
