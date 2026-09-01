@@ -6,14 +6,22 @@ A VS Code extension designed to completely replace the external Sikuli IDE by em
 
 ## What/Why
 
-This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar to handle four specific roles:
+This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar, split into region tools and image tools.
+
+### Region
 
 | Feature | Description |
 |---------|-------------|
-| **Region** | Click and drag anywhere on your display to instantly inject native `Region(x, y, w, h)` coordinate snippets directly at your cursor position. |
+| **Capture** | Click and drag anywhere on your display to inject a native `Region(x, y, w, h)` snippet at your cursor. A **Retake** link floats above every existing call so you can reselect its bounds without deleting the line. |
+| **Highlight** | Flashes a dimmed, green-bordered snapshot of a region's bounds on screen for two seconds, so you can confirm it still lines up with the target UI without leaving the editor. |
+
+### Image
+
+| Feature | Description |
+|---------|-------------|
 | **Capture** | Take an on-screen snapshot. The tool looks backward on your current line for a variable assignment (e.g. `target_img =`) and titles the file dynamically (`scriptName_target_login.png`) before inserting the string filename at the cursor. If no variable is found, it falls back to a Unix timestamp for the image name. |
 | **Offset** | Parses an existing image reference and offset from your active code line, launching an interactive crosshair over the asset to calculate mouse `[dx, dy]` targets. Confirming a point updates your line configuration in-place. |
-| **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. Every hit is boxed and labelled with its true score; the strongest hit (the one SikuliX itself would act on) is boxed in green. |
+| **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. Every hit is boxed and labelled with its true score; the strongest hit is boxed in green (though this is not guaranteed to be the one Sikuli returns, this feature is more for tuning similarities in development). |
 
 ## Differences from the Sikuli IDE / Quality of Life Features
 
@@ -43,7 +51,15 @@ Integer conversions narrow the search to digits, so `btn_%d.png` will not pick u
 `btn_cancel.png`. `%%`, `{{` and `}}` are treated as literals.
 
 > **Note:** Jython 2.7 has no f-strings. Use `%` or `.format()` unless you run your
-> scripts on SikuliX's Python 3 execution path.
+> scripts on some Python 3 execution path.
+
+### Region highlight
+
+Highlighting doesn't rely on real window transparency, since Wayland compositors are
+inconsistent about honouring per-window alpha. Instead it grabs a freeze-frame of the
+screen, crops to the region's bounds, dims it, and draws a green border around the crop,
+then shows that as a plain opaque window in place for two seconds. Looks the same, works
+everywhere.
 
 ## Limitations / Future Work
 
@@ -83,7 +99,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Run the Tests
+### 3. Run the Tests (Optional, if your changing stuff)
 
 Both suites run from the terminal without the extension host.
 
