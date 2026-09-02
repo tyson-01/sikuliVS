@@ -6,7 +6,14 @@ A VS Code extension designed to completely replace the external Sikuli IDE by em
 
 ## What/Why
 
-This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar, split into region tools and image tools.
+This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar, split into region tools, location tools and image tools.
+
+### Location
+
+| Feature | Description |
+|---------|-------------|
+| **Pick** | Click anywhere on your display to inject a native `Location(x, y)` snippet at your cursor. A magnifier follows the pointer so you can see the individual pixels you are aiming at; a click pins the point, the arrow keys walk it a pixel at a time, a right click unpins it again, and Enter commits. A **Retake** link floats above every existing call and reopens the picker already pinned to that point. |
+| **Show** | Dims a freeze-frame of the whole screen, leaves the point's own surroundings at full brightness, and runs rails through it across the full width and height, for a couple of seconds. Confirms both the pixel and where on screen it sits. |
 
 ### Region
 
@@ -35,7 +42,7 @@ Rather than a toggle for displaying image in-line within the code or the image p
 
 Dynamic image names resolve to every file they could stand for, so hover, Set Offset and
 Preview Match all work on templated filenames. Match Preview overlays every variant at
-once, colour coded with a hit count per file, and `◀ ▶` isolates one at a time. All three
+once, colour coded with a hit count per file, and '<' '>' isolates one at a time. All three
 formatting styles are covered:
 
 | Style | Example | Resolves |
@@ -55,11 +62,8 @@ Integer conversions narrow the search to digits, so `btn_%d.png` will not pick u
 
 ### Region highlight
 
-Highlighting doesn't rely on real window transparency, since Wayland compositors are
-inconsistent about honouring per-window alpha. Instead it grabs a freeze-frame of the
-screen, crops to the region's bounds, dims it, and draws a green border around the crop,
-then shows that as a plain opaque window in place for two seconds. Looks the same, works
-everywhere.
+Sikuli IDE's regions let you click them but only to retake. The only way to see where they were, was to temporarily add a
+.hightlight(3) after your regions and right click the sidebar to run line. This extension has a built in highlight feature.
 
 ## Limitations / Future Work
 
@@ -104,7 +108,7 @@ pip install -r requirements.txt
 Both suites run from the terminal without the extension host.
 
 ```bash
-npm run test:unit      # image reference and Pattern expression parsing
+npm run test:unit      # image, Region, Location and Pattern expression parsing
 npm run test:python    # OpenCV template matching engine
 ```
 

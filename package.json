@@ -19,6 +19,16 @@
         "icon": "$(screen-full)"
       },
       {
+        "command": "sikuliVS.location",
+        "title": "SikuliVS: Pick Location",
+        "icon": "$(location)"
+      },
+      {
+        "command": "sikuliVS.showLocation",
+        "title": "SikuliVS: Show Location",
+        "icon": "$(search)"
+      },
+      {
         "command": "sikuliVS.capture",
         "title": "SikuliVS: Capture Image",
         "icon": "$(device-camera)"
