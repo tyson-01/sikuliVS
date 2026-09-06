@@ -30,6 +30,30 @@ This extension provides an inline VS Code/VSCodium workflow for writing SikuliX 
 | **Offset** | Parses an existing image reference and offset from your active code line, launching an interactive crosshair over the asset to calculate mouse `[dx, dy]` targets. Confirming a point updates your line configuration in-place. |
 | **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. Every hit is boxed and labelled with its true score; the strongest hit is boxed in green (though this is not guaranteed to be the one Sikuli returns, this feature is more for tuning similarities in development). |
 
+### Run
+
+| Feature | Description |
+|---------|-------------|
+| **Run** | A ▶ button in the editor title bar, and a row in the sidebar, hands the enclosing `.sikuli` bundle to SikuliX and streams its output into the **SikuliVS** output channel as it arrives. While a script runs the button becomes ⏹, which kills the JVM; SikuliX also registers its own **Alt+Shift+C** abort hotkey, which is the one that still reaches you once a script has taken over the mouse. |
+| **Errors** | A failed run is parsed back out of SikuliX's output. The reported line is underlined in the editor with the exception and its cause and listed in the Problems panel. |
+
+The log itself lands in the **SikuliVS** channel of the OUTPUT panel — pick it from the
+dropdown, which defaults to something else such as Tasks. It is not the Terminal, since
+java is spawned directly rather than through a shell.
+
+Not every logging call is visible by default:
+
+| Call | Default (`sikuliVS.debugLevel: 0`) | Shows as |
+|---|---|---|
+| `print "..."` | yes | the text itself |
+| `Debug.user("...")` | yes | `[user (date, time)] ...` |
+| `Debug.info("...")` | yes | `[info] ...` |
+| `Debug.log("...")` | **no** | `[debug] ...`, only at `debugLevel` 1 or above |
+
+`Debug.log` is gated on SikuliX's `Settings.DebugLogs`, which starts out `false` and is only
+enabled once a debug level is set. `Debug.user` is gated on `Settings.UserLogs`, which
+starts out `true` — so **`Debug.user` is the one to reach for** when logging from a script.
+
 ## Differences from the Sikuli IDE / Quality of Life Features
 
 This extension is opinionated. A few things that fit my workflow have been implemented.
@@ -65,59 +89,103 @@ Integer conversions narrow the search to digits, so `btn_%d.png` will not pick u
 Sikuli IDE's regions let you click them but only to retake. The only way to see where they were, was to temporarily add a
 .hightlight(3) after your regions and right click the sidebar to run line. This extension has a built in highlight feature.
 
+## Configuration
+
+Running scripts needs a SikuliX jar and a Java runtime; neither is bundled with the extension.
+Use the **API** jar (`sikulixapi-<version>.jar`).
+
+| Setting | Default | Description |
+|---|---|---|
+| `sikuliVS.jarPath` | *(empty)* | Absolute path to the jar. When empty, a `sikulix*.jar` sitting in a workspace root is used; failing that you are prompted once and the choice is saved. |
+| `sikuliVS.javaPath` | *(empty)* | Java runtime used to launch SikuliX. When empty, one is discovered (see below); failing that you are prompted once and the choice is saved. |
+| `sikuliVS.pythonPath` | *(empty)* | Interpreter for the visual tools. When empty, a `.venv` beside the extension is tried, then one in a workspace root, then `python3` on `PATH` — the first that can import `cv2`, `numpy`, `PIL`, `tkinter` and `dbus_fast` wins. A packaged install has no bundled virtualenv, so this usually needs setting. |
+| `sikuliVS.debugLevel` | `0` | SikuliX's `-d` level. `0` omits the option; `3` logs everything, including where startup fails. |
+| `sikuliVS.jvmArgs` | `[]` | Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED`. |
+
+### Java has to be headful
+
+SikuliX reaches the screen through `java.awt.Robot`, so a headless-only JRE cannot run
+anything at all.
+
+You do not have to configure it if a usable runtime is installed. With `sikuliVS.javaPath`
+empty the extension takes the first headful runtime it finds, in this order:
+
+1. `$JAVA_HOME/bin/java`
+2. `java` on `PATH`
+3. JVMs installed under `/usr/lib/jvm`, `/usr/java` or `/opt/java`
+
+If nothing usable is found, or `sikuliVS.javaPath` points at something that will not work,
+you are prompted to pick a `java` binary and the choice is saved to your settings.
+
 ## Limitations / Future Work
 
 Currently does not replace all Sikuli IDE functions.
 
-- **Run:** Does not currently allow running the open Sikuli Jython script.
-- **Environment:** Only tested on Fedora 44 KDE Plasma.
+- **Environment:** Only tested on Fedora 44 KDE Plasma. Running scripts does not work on
+  Wayland yet; it was verified against a real X server in an Ubuntu container.
+- **Debugging:** No breakpoints yet. The Jython bundled in the jar does support `sys.settrace`
+  with correct line numbers and live locals, so a debug adapter is feasible; it is not built.
 
 ## Known Bugs
 
 - **???:** Probably a bunch of stuff.
 
-## How to Run and Test
+## Installing
 
-Execute these steps in your local terminal to establish workspace and run the extension in debug mode.
+There are two ways in, and they differ in one respect: where the Python interpreter for the
+visual tools comes from.
 
-### 1. Install Extension Dependencies
+### As a packaged extension
 
-Download and compile the extension frontend dependencies from the project root.
+*Not published yet — this is how it will work.* Install the `.vsix` in VSCodium, then
+provide the two things the extension deliberately does not bundle:
+
+1. **A SikuliX jar.** Download `sikulixapi-<version>-<platform>.jar` and either drop it in
+   your workspace root or set `sikuliVS.jarPath`.
+2. **A Python environment for the visual tools.** The `.vsix` ships the sidecar scripts but
+   no virtualenv — one would be hundreds of megabytes of platform-specific binaries. Build
+   one anywhere and point `sikuliVS.pythonPath` at its interpreter:
+
+   ```bash
+   python3 -m venv ~/.sikulivs-venv
+   ~/.sikulivs-venv/bin/pip install opencv-python numpy pillow dbus-fast
+   ```
+
+   Then set `sikuliVS.pythonPath` to `~/.sikulivs-venv/bin/python3`. On Debian-family
+   systems `tkinter` comes from the system package `python3-tk`, not from pip.
+
+Java is found automatically if a headful runtime is installed; see
+[Configuration](#configuration).
+
+### From source
+
+For modifying the extension. Everything is discovered automatically here, so no settings
+are needed.
 
 ```bash
+git clone https://github.com/tyson-01/sikuliVS.git
+cd sikuliVS
 npm install
-```
 
-### 2. Configure the Python Virtual Environment
-
-The extension bridge strictly invokes a localized Python binary at `./.venv/bin/python3`. You must provision your virtual environment exactly at this path in the root folder.
-
-```bash
-# Initialize the environment
+# The interpreter is looked for at ./.venv first, so this path is the convenient one.
 python3 -m venv .venv
-
-# Activate the environment
-source .venv/bin/activate
-
-# Install required computer-vision packages
-pip install -r requirements.txt
+./.venv/bin/pip install -r requirements.txt
 ```
 
-### 3. Run the Tests (Optional, if your changing stuff)
+Drop a `sikulixapi-<version>-<platform>.jar` in the repo root and it will be found without
+configuring anything.
 
-Both suites run from the terminal without the extension host.
+Then open the folder in VS Code / VSCodium and press **F5** to launch an Extension
+Development Host window, and work on your automation scripts inside that second window.
+
+### Running the tests
+
+Both suites run from the terminal, no extension host required.
 
 ```bash
-npm run test:unit      # image, Region, Location and Pattern expression parsing
+npm run test:unit      # parsing, script targets, SikuliX error output, command line
 npm run test:python    # OpenCV template matching engine
 ```
-
-### 4. Launch the Debugger
-
-1. Open the **sikuliVS** project root folder in VS Code.
-2. Press **F5** (or navigate to the **Run and Debug** panel and select **Launch Extension**).
-3. This will launch a separate **Extension Development Host** workspace window.
-4. Open your active automation scripts or directories inside that development window to test or execute the tools via the sidebar panel and text shortcuts.
 
 ## Acknowledgements
 

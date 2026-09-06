@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { runPythonGui } from '../bridge/guiBridge';
 import { showError } from '../utils/output';
+import { bundleName } from '../utils/scriptTarget';
 
 /**
  * Command: sikuliVS.capture
@@ -19,7 +20,7 @@ export function registerCaptureCommand(context: vscode.ExtensionContext): void {
 
             // 1. Extract environment context from the active file
             const fileDir = path.dirname(editor.document.uri.fsPath);
-            const scriptName = path.basename(fileDir).replace('.sikuli', '');
+            const scriptName = bundleName(fileDir);
 
             // 2. Determine the image filename based on the user's code context
             const imageName = determineImageName(editor, scriptName);

@@ -12,6 +12,7 @@ export class SikuliVSView implements vscode.TreeDataProvider<SikuliItem> {
 
     async getChildren(): Promise<SikuliItem[]> {
         return [
+            new SikuliItem('▶ Run Script', 'sikuliVS.runScript', 'play'),
             new SikuliItem('📍 Location Pick', 'sikuliVS.location', 'location'),
             new SikuliItem('🔎 Location Show', 'sikuliVS.showLocation', 'search'),
             new SikuliItem('📐 Region Capture', 'sikuliVS.region', 'screen-full'),

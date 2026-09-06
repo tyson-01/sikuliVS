@@ -7,3 +7,5 @@ test-proj/
 dump.sh
 roadmap.txt
 __pycache__/
+*.jar
+private/

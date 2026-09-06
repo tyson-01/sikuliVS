@@ -6,12 +6,14 @@ import { registerOffsetCommand } from './commands/offset';
 import { registerMatchCommand } from './commands/match';
 import { registerHighlightCommand } from './commands/highlight';
 import { registerShowLocationCommand } from './commands/showLocation';
+import { registerRunCommands } from './commands/run';
 import { SikuliVSView } from './views/sikuliVSView';
 import { ImageHoverProvider } from './providers/imageHoverProvider';
 import { ImageCodeLensProvider } from './providers/imageCodeLensProvider';
 import { RegionCodeLensProvider } from './providers/regionCodeLensProvider';
 import { LocationCodeLensProvider } from './providers/locationCodeLensProvider';
 import { outputChannel } from './utils/output';
+import { diagnosticCollection } from './utils/runDiagnostics';
 
 // Target files for background features (Hover, CodeLens)
 const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language: 'python' };
@@ -21,7 +23,7 @@ const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language
  * Called automatically by VS Code when the activationEvents defined in package.json are triggered.
  */
 export function activate(context: vscode.ExtensionContext) {
-    context.subscriptions.push(outputChannel());
+    context.subscriptions.push(outputChannel(), diagnosticCollection());
     registerCommands(context);
     registerViews(context);
     registerProviders(context);
@@ -29,6 +31,7 @@ export function activate(context: vscode.ExtensionContext) {
 
 // UI Actions triggered via Command Palette or keybindings
 function registerCommands(context: vscode.ExtensionContext): void {
+    registerRunCommands(context);
     registerRegionCommand(context);
     registerCaptureCommand(context);
     registerOffsetCommand(context);

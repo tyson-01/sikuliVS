@@ -9,3 +9,15 @@ vsc-extension-quickstart.md
 **/*.map
 **/*.ts
 **/.vscode-test.*
+*.jar
+
+# Local scaffolding that is not part of the project.
+private/**
+
+# The Python environment is provisioned by the user, not shipped.
+.venv/**
+
+# Test fixtures and suites.
+test-proj/**
+python_gui/tests/**
+dump.sh
