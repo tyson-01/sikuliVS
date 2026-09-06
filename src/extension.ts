@@ -7,6 +7,7 @@ import { registerMatchCommand } from './commands/match';
 import { registerHighlightCommand } from './commands/highlight';
 import { registerShowLocationCommand } from './commands/showLocation';
 import { registerRunCommands } from './commands/run';
+import { registerDebugging } from './debug/register';
 import { SikuliVSView } from './views/sikuliVSView';
 import { ImageHoverProvider } from './providers/imageHoverProvider';
 import { ImageCodeLensProvider } from './providers/imageCodeLensProvider';
@@ -32,6 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
 // UI Actions triggered via Command Palette or keybindings
 function registerCommands(context: vscode.ExtensionContext): void {
     registerRunCommands(context);
+    registerDebugging(context);
     registerRegionCommand(context);
     registerCaptureCommand(context);
     registerOffsetCommand(context);

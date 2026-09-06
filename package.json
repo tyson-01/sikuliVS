@@ -10,7 +10,8 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:python"
+    "onLanguage:python",
+    "onDebugResolve:sikulivs"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -24,6 +25,11 @@
         "command": "sikuliVS.stopScript",
         "title": "SikuliVS: Stop Script",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "sikuliVS.debugScript",
+        "title": "SikuliVS: Debug Script",
+        "icon": "$(debug-alt)"
       },
       {
         "command": "sikuliVS.region",
@@ -67,6 +73,11 @@
           "command": "sikuliVS.runScript",
           "when": "resourceLangId == python && !sikuliVS.running",
           "group": "navigation@1"
+        },
+        {
+          "command": "sikuliVS.debugScript",
+          "when": "resourceLangId == python && !sikuliVS.running",
+          "group": "navigation@2"
         },
         {
           "command": "sikuliVS.stopScript",
@@ -126,7 +137,62 @@
           "markdownDescription": "Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED` to silence Java 24+ native access warnings. Never added automatically, since older JVMs reject unknown flags."
         }
       }
-    }
+    },
+    "breakpoints": [
+      {
+        "language": "python"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "sikulivs",
+        "label": "SikuliX Script",
+        "languages": [
+          "python"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The Jython script to debug. A script inside a .sikuli bundle resolves its images against that bundle.",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Break on the first line of the script.",
+                "default": false
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "sikulivs",
+            "request": "launch",
+            "name": "SikuliX: Debug Script",
+            "program": "${file}",
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "SikuliVS: Debug the open script",
+            "description": "Runs the open Jython script under SikuliX with breakpoints enabled.",
+            "body": {
+              "type": "sikulivs",
+              "request": "launch",
+              "name": "SikuliX: Debug Script",
+              "program": "^\"\\${file}\"",
+              "stopOnEntry": false
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

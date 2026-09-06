@@ -5,12 +5,12 @@ import { resolveScriptTarget } from '../utils/scriptTarget';
 import { ScriptErrorParser } from '../utils/runErrors';
 import { clearRunDiagnostics, publishScriptDiagnostics } from '../utils/runDiagnostics';
 import { log, showError, showInfo } from '../utils/output';
+import { acquireRun, releaseRun, runHolder } from '../utils/runLock';
 
 // Drives the play/stop swap on the editor title button.
 const RUNNING_CONTEXT = 'sikuliVS.running';
 
 let activeRun: SikulixRun | null = null;
-let starting = false;
 let stopRequested = false;
 
 /**
@@ -30,11 +30,12 @@ export function registerRunCommands(context: vscode.ExtensionContext): void {
 async function runScript(resource?: vscode.Uri): Promise<void> {
     // Guards the whole launch, not just the spawn: resolving the script and its environment
     // awaits, and a second click must not slip past in the meantime.
-    if (activeRun || starting) {
-        vscode.window.showWarningMessage('SikuliVS: A script is already running.');
+    if (!acquireRun('run')) {
+        vscode.window.showWarningMessage(
+            `SikuliVS: A script is already ${runHolder() === 'debug' ? 'being debugged' : 'running'}.`
+        );
         return;
     }
-    starting = true;
 
     try {
         const document = await resolveDocument(resource);
@@ -85,7 +86,7 @@ async function runScript(resource?: vscode.Uri): Promise<void> {
         void showError(`SikuliVS Run Error: ${err}`);
     } finally {
         activeRun = null;
-        starting = false;
+        releaseRun();
         await setRunning(false);
     }
 }

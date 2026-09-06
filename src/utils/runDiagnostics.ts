@@ -48,6 +48,19 @@ export function publishScriptDiagnostics(pyFile: string, errors: ScriptError[]):
 }
 
 /**
+ * Marks up a failure whose location is already known, as the debugger's own report is:
+ * it names the file and line directly rather than through SikuliX's console output.
+ */
+export function publishKnownError(
+    file: string,
+    line: number,
+    column: number | undefined,
+    message: string
+): void {
+    diagnosticCollection().set(vscode.Uri.file(file), [toDiagnostic(message, line, column)]);
+}
+
+/**
  * Maps a traceback frame's module back to a file. SikuliX names the launched script
  * `main`; anything it imported keeps its own module name, which in a bundle is a sibling
  * `.py` beside the script.
