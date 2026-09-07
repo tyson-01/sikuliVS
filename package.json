@@ -2,7 +2,7 @@
   "name": "sikulivs",
   "displayName": "sikuliVS",
   "description": "sikuliVS adds the sikuliX specific features of the sikuliX IDE into VScode",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "publisher": "tyson-01",
   "icon": "media/icon.png",
   "engines": {
