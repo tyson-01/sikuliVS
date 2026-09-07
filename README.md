@@ -178,8 +178,19 @@ visual tools comes from.
 
 ### As a packaged extension
 
-*Not published yet; this is how it will work.* Install the `.vsix` in VSCodium, then
-provide the two things the extension deliberately does not bundle:
+Each release is a `.vsix` attached to the
+[Releases page](https://github.com/tyson-01/sikuliVS/releases). There is no marketplace
+listing, so VSCodium will not offer updates on its own; check back there for new versions.
+Download the file, then:
+
+```bash
+codium --install-extension sikulivs-<version>.vsix
+```
+
+The Extensions view does the same job through its **...** menu, **Install from VSIX**.
+
+Installing this way gives you the extension but not its two external pieces, which are
+deliberately not bundled:
 
 1. **A SikuliX jar.** Download `sikulixapi-<version>-<platform>.jar` and either drop it in
    your workspace root or set `sikuliVS.jarPath`.

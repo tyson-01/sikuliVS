@@ -1,12 +1,16 @@
 {
-  "name": "sikuliVS",
+  "name": "sikulivs",
   "displayName": "sikuliVS",
   "description": "sikuliVS adds the sikuliX specific features of the sikuliX IDE into VScode",
   "version": "0.0.1",
+  "publisher": "tyson-01",
+  "icon": "media/icon.png",
   "engines": {
-    "vscode": "^1.121.0"
+    "vscode": "^1.75.0"
   },
   "categories": [
+    "Debuggers",
+    "Testing",
     "Other"
   ],
   "activationEvents": [
@@ -253,6 +257,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
+    "package": "vsce package",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
@@ -262,7 +267,8 @@
   },
   "devDependencies": {
     "@types/node": "24.x",
-    "@types/vscode": "^1.121.0",
+    "@types/vscode": "^1.75.0",
+    "@vscode/vsce": "^3.9.2",
     "eslint": "^10.5.0",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1"
