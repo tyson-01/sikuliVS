@@ -15,6 +15,7 @@ import { RegionCodeLensProvider } from './providers/regionCodeLensProvider';
 import { LocationCodeLensProvider } from './providers/locationCodeLensProvider';
 import { outputChannel } from './utils/output';
 import { diagnosticCollection } from './utils/runDiagnostics';
+import { discardPending, sweepStaleTempDirs } from './debug/captures';
 
 // Target files for background features (Hover, CodeLens)
 const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language: 'python' };
@@ -25,6 +26,10 @@ const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language
  */
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(outputChannel(), diagnosticCollection());
+
+    // Debug sessions leave a temp folder behind if the editor is killed mid-run.
+    sweepStaleTempDirs();
+
     registerCommands(context);
     registerViews(context);
     registerProviders(context);
@@ -65,4 +70,6 @@ function registerProviders(context: vscode.ExtensionContext): void {
  * Cleanup function called automatically when the extension is disabled or uninstalled.
  * (VS Code handles standard subscription disposal automatically).
  */
-export function deactivate(): void {}
+export function deactivate(): void {
+    discardPending();
+}

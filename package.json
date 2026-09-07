@@ -65,6 +65,21 @@
         "command": "sikuliVS.highlight",
         "title": "SikuliVS: Highlight Region",
         "icon": "$(sparkle)"
+      },
+      {
+        "command": "sikuliVS.console",
+        "title": "SikuliVS: Interactive Console",
+        "icon": "$(terminal)"
+      },
+      {
+        "command": "sikuliVS.debugHighlight",
+        "title": "SikuliVS: Highlight on Screen",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "sikuliVS.debugCopyRegion",
+        "title": "SikuliVS: Copy as Region(...)",
+        "icon": "$(clippy)"
       }
     ],
     "menus": {
@@ -83,6 +98,28 @@
           "command": "sikuliVS.stopScript",
           "when": "resourceLangId == python && sikuliVS.running",
           "group": "navigation@1"
+        }
+      ],
+      "debug/variables/context": [
+        {
+          "command": "sikuliVS.debugHighlight",
+          "when": "debugConfigurationType == 'sikulivs'",
+          "group": "sikulivs@1"
+        },
+        {
+          "command": "sikuliVS.debugCopyRegion",
+          "when": "debugConfigurationType == 'sikulivs'",
+          "group": "sikulivs@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "sikuliVS.debugHighlight",
+          "when": "false"
+        },
+        {
+          "command": "sikuliVS.debugCopyRegion",
+          "when": "false"
         }
       ]
     },
@@ -135,6 +172,21 @@
           },
           "default": [],
           "markdownDescription": "Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED` to silence Java 24+ native access warnings. Never added automatically, since older JVMs reject unknown flags."
+        },
+        "sikuliVS.debug.captureMode": {
+          "type": "string",
+          "enum": [
+            "actions",
+            "stops",
+            "off"
+          ],
+          "enumDescriptions": [
+            "Photograph the screen after every line that did something, and at every stop. Makes the filmstrip a recording of the run.",
+            "Photograph the screen only when the script stops at a breakpoint, exception or pause.",
+            "Never capture. Removes the small pause each capture adds."
+          ],
+          "default": "actions",
+          "markdownDescription": "When a debugged script has its screen photographed for the SikuliVS Debug panel. Captures are taken before the editor is told about a stop, so they show the script's screen rather than the editor, and are written to a temp folder that is cleared when the next run starts."
         }
       }
     },
@@ -165,6 +217,11 @@
                 "type": "boolean",
                 "description": "Break on the first line of the script.",
                 "default": false
+              },
+              "bundle": {
+                "type": "string",
+                "description": "Folder images resolve against. Defaults to the script's own folder.",
+                "default": ""
               }
             }
           }

@@ -14,6 +14,9 @@ import { log } from '../utils/output';
 import { acquireRun, releaseRun, runHolder } from '../utils/runLock';
 import { AgentChannel, AgentEvent } from './agentChannel';
 import { executableLine, removeLaunchDir, writeLaunchDir } from './launcher';
+import { beginCaptureSession, CaptureFrame, discardPending, retainAfterSession } from './captures';
+import { DebugPanel } from './panel';
+import { diagnoseFrame } from './diagnosis';
 
 // The script runs on one Jython thread, so the session reports exactly one.
 const THREAD_ID = 1;
@@ -31,6 +34,12 @@ interface DapRequest extends DapMessage {
     type: 'request';
     command: string;
     arguments?: any;
+}
+
+interface PlacedBreakpoint {
+    line: number;
+    condition?: string;
+    hitCondition?: string;
 }
 
 interface AgentFrame {
@@ -57,6 +66,8 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
     private outgoingSeq = 0;
     private run: SikulixRun | null = null;
     private launcher: string | null = null;
+    private captureDir: string | null = null;
+    private consoleStub: string | null = null;
     private pyFile = '';
 
     private agentReady = false;
@@ -65,8 +76,9 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
     private started = false;
     private terminated = false;
 
-    private readonly breakpoints = new Map<string, { line: number; condition?: string }[]>();
+    private readonly breakpoints = new Map<string, PlacedBreakpoint[]>();
     private breakOnRaised = false;
+    private breakOnUncaught = true;
 
     private holdsRunLock = false;
 
@@ -110,7 +122,8 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
             case 'setExceptionBreakpoints':
                 // Sent before the agent is up, so it is kept and replayed at start.
                 this.breakOnRaised = (args.filters ?? []).includes('raised');
-                this.channel.notify('setExceptionBreakpoints', { raised: this.breakOnRaised });
+                this.breakOnUncaught = (args.filters ?? []).includes('uncaught');
+                this.channel.notify('setExceptionBreakpoints', this.exceptionFilters());
                 return this.respond(request, {});
 
             case 'configurationDone':
@@ -146,6 +159,16 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
                 this.channel.notify(request.command);
                 return this.respond(request, {});
 
+            case 'sikulivsHighlight':
+                await this.channel.request('highlight', {
+                    expression: args.expression,
+                    seconds: args.seconds ?? 2
+                });
+                return this.respond(request, {});
+
+            case 'sikulivsCapture':
+                return this.respond(request, await this.channel.request('capture'));
+
             case 'terminate':
             case 'disconnect':
                 this.respond(request, {});
@@ -160,15 +183,26 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
         return {
             supportsConfigurationDoneRequest: true,
             supportsConditionalBreakpoints: true,
+            supportsHitConditionalBreakpoints: true,
             supportsEvaluateForHovers: true,
             supportsTerminateRequest: true,
             supportsDelayedStackTraceLoading: false,
-            exceptionBreakpointFilters: [{
-                filter: 'raised',
-                label: 'Raised exceptions',
-                description: 'Break wherever an exception is raised, including FindFailed.',
-                default: false
-            }]
+            exceptionBreakpointFilters: [
+                {
+                    filter: 'uncaught',
+                    label: 'Uncaught exceptions',
+                    description:
+                        'Stop before the script dies, while the screen and variables can ' +
+                        'still be inspected.',
+                    default: true
+                },
+                {
+                    filter: 'raised',
+                    label: 'Raised exceptions',
+                    description: 'Break wherever an exception is raised, including FindFailed.',
+                    default: false
+                }
+            ]
         };
     }
 
@@ -202,15 +236,25 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
 
         const script = resolveScriptTarget(program);
         this.pyFile = script.pyFile;
+        this.consoleStub = typeof request.arguments?.consoleStub === 'string'
+            ? request.arguments.consoleStub
+            : null;
         clearRunDiagnostics();
 
         const port = await this.channel.listen();
+
+        // A panel from a previous run is bound to that run's capture folder
+        // through its localResourceRoots, so it could never load this run's
+        // images. Start it over.
+        DebugPanel.active()?.dispose();
+        this.captureDir = beginCaptureSession();
         this.launcher = writeLaunchDir({
             port,
             script: script.pyFile,
-            bundle: path.dirname(script.pyFile),
+            bundle: this.bundleFor(script.pyFile, request.arguments?.bundle),
             roots: this.userRoots(script.pyFile),
-            stopOnEntry: request.arguments?.stopOnEntry === true
+            stopOnEntry: request.arguments?.stopOnEntry === true,
+            captureDir: this.captureDir
         }, this.extensionPath);
 
         log(`[debug] ${script.target}`);
@@ -229,6 +273,15 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
 
         this.respond(request, {});
         this.watchForConnection();
+    }
+
+    /**
+     * Where images resolve from. Normally the script's own folder; the
+     * interactive console overrides it so a throwaway stub in a temp folder
+     * still finds the project's images.
+     */
+    private bundleFor(pyFile: string, override?: unknown): string {
+        return typeof override === 'string' && override ? override : path.dirname(pyFile);
     }
 
     /**
@@ -264,8 +317,9 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
         for (const [file, lines] of this.breakpoints) {
             await this.pushBreakpoints(file, lines);
         }
-        await this.channel.request('setExceptionBreakpoints', { raised: this.breakOnRaised })
+        await this.channel.request('setExceptionBreakpoints', this.exceptionFilters())
             .catch(() => undefined);
+        this.channel.notify('setCaptureMode', { mode: this.captureMode() });
         this.channel.notify('start');
     }
 
@@ -278,12 +332,12 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
         }
 
         const source = readLines(file);
-        const requested = (request.arguments?.breakpoints ?? []) as
-            { line: number; condition?: string }[];
+        const requested = (request.arguments?.breakpoints ?? []) as PlacedBreakpoint[];
 
-        const placed = requested.map(breakpoint => ({
+        const placed: PlacedBreakpoint[] = requested.map(breakpoint => ({
             line: executableLine(source, breakpoint.line),
-            condition: breakpoint.condition
+            condition: breakpoint.condition,
+            hitCondition: breakpoint.hitCondition
         }));
 
         this.breakpoints.set(file, placed);
@@ -296,10 +350,7 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
         });
     }
 
-    private async pushBreakpoints(
-        file: string,
-        lines: { line: number; condition?: string }[]
-    ): Promise<void> {
+    private async pushBreakpoints(file: string, lines: PlacedBreakpoint[]): Promise<void> {
         if (!this.channel.connected) {
             return;
         }
@@ -368,7 +419,12 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
                 void this.startIfReady();
                 return;
 
+            case 'frame':
+                this.showFrame(event, false);
+                return;
+
             case 'stopped':
+                this.showFrame(event);
                 this.event('stopped', {
                     reason: event.reason,
                     description: event.text ?? undefined,
@@ -399,6 +455,56 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
 
             default:
                 return;
+        }
+    }
+
+    private exceptionFilters(): Record<string, boolean> {
+        return { raised: this.breakOnRaised, uncaught: this.breakOnUncaught };
+    }
+
+    private captureMode(): string {
+        return vscode.workspace.getConfiguration('sikuliVS')
+            .get<string>('debug.captureMode', 'actions');
+    }
+
+    /**
+     * Puts the screenshot taken at this stop in front of the user. Revealed
+     * without focus, so a stop never steals the cursor from the editor.
+     */
+    private showFrame(event: AgentEvent, reveal = true): void {
+        const capture = event.capture as CaptureFrame | null | undefined;
+        if (!capture || !this.captureDir) {
+            return;
+        }
+
+        const panel = DebugPanel.show(
+            vscode.Uri.file(this.extensionPath),
+            this.captureDir,
+            (index) => void diagnoseFrame(this.channel, panel, index),
+            discardPending
+        );
+
+        const file = String(event.file);
+        const line = Number(event.line);
+        const text = event.text ? String(event.text) : undefined;
+
+        panel.addFrame({
+            capture,
+            file,
+            line,
+            reason: String(capture.reason ?? event.reason),
+            text,
+            // The line that ran, so the filmstrip reads as a sequence of actions
+            // rather than a row of anonymous screenshots.
+            label: (readLines(file)[line - 1] ?? '').trim() || undefined,
+            elapsed: typeof event.elapsed === 'number' ? event.elapsed : undefined
+        }, reveal);
+
+        // Diagnose now rather than on request: the interpreter that can answer
+        // is alive while the script is suspended, and gone once it resumes.
+        if (text && text.indexOf('FindFailed') !== -1) {
+            log(`[debug] ${text.replace(/\s+$/, '')}`);
+            void diagnoseFrame(this.channel, panel, capture.index);
         }
     }
 
@@ -443,9 +549,20 @@ export class SikulixDebugSession implements vscode.DebugAdapter {
 
     private cleanUp(): void {
         this.channel.dispose();
+
+        // The captures deliberately outlive the session: a run that ends in a
+        // FindFailed is exactly when the last screenshot is worth reading.
+        DebugPanel.active()?.sessionEnded();
+        retainAfterSession(this.captureDir);
+        this.captureDir = null;
+
         if (this.launcher) {
             removeLaunchDir(this.launcher);
             this.launcher = null;
+        }
+        if (this.consoleStub) {
+            removeLaunchDir(this.consoleStub);
+            this.consoleStub = null;
         }
         if (this.holdsRunLock) {
             this.holdsRunLock = false;
@@ -504,6 +621,7 @@ interface AgentVariable {
     value: string;
     type: string;
     ref: number;
+    path: string;
 }
 
 function toDapVariable(variable: AgentVariable): Record<string, unknown> {
@@ -511,7 +629,10 @@ function toDapVariable(variable: AgentVariable): Record<string, unknown> {
         name: variable.name,
         value: variable.value,
         type: variable.type,
-        variablesReference: variable.ref
+        variablesReference: variable.ref,
+        // What it takes to reach this value again, so an editor action on a
+        // variable can re-evaluate it in the stopped frame.
+        evaluateName: variable.path || undefined
     };
 }
 

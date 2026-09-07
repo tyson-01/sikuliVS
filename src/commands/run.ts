@@ -78,7 +78,7 @@ async function runScript(resource?: vscode.Uri): Promise<void> {
         log(`[run] finished with exit code ${exitCode} in ${elapsed}s`);
 
         // Not awaited: a notification carrying a button stays up until it is dismissed,
-        // and waiting on it would hold `sikuliVS.running` true - leaving the toolbar
+        // and waiting on it would hold `sikuliVS.running` true, leaving the toolbar
         // stuck on the stop button and refusing the next run.
         void announceOutcome(script.name, exitCode, elapsed, errors, parser.hadErrorOutput);
 

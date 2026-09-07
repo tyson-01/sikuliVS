@@ -10,11 +10,12 @@ export interface LauncherSpec {
     bundle: string;      // Folder SikuliX should resolve images against
     roots: string[];     // Folders whose files count as the user's own code
     stopOnEntry: boolean;
+    captureDir: string;  // Where the agent writes screenshots
 }
 
 /**
  * The Jython file SikuliX is actually pointed at. It hands control to the agent, which
- * installs the tracer and then runs the user's script in this same namespace - so the
+ * installs the tracer and then runs the user's script in this same namespace, so the
  * script sees the interpreter SikuliX prepared, header and all.
  */
 export function launcherSource(spec: LauncherSpec, agentDir: string): string {
@@ -30,6 +31,7 @@ export function launcherSource(spec: LauncherSpec, agentDir: string): string {
         `    ${literal(spec.bundle)},`,
         `    [${spec.roots.map(literal).join(', ')}],`,
         `    ${spec.stopOnEntry ? 'True' : 'False'},`,
+        `    ${literal(spec.captureDir)},`,
         '    globals())',
         ''
     ].join('\n');
@@ -51,7 +53,9 @@ function literal(value: string): string {
  * is not somewhere to be writing files.
  */
 export function writeLaunchDir(spec: LauncherSpec, extensionPath: string): string {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'sikulivs-debug-'));
+    // Not "sikulivs-": SikuliX clears temp directories whose names begin with
+    // "sikuli" when it exits. See the note in captures.ts.
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'svs-launch-'));
 
     fs.copyFileSync(
         path.join(extensionPath, 'pysrc', AGENT_MODULE),

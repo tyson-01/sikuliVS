@@ -6,7 +6,7 @@ A VS Code extension designed to completely replace the external Sikuli IDE by em
 
 ## What/Why
 
-This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar, split into region tools, location tools and image tools.
+This extension provides an inline VS Code/VSCodium workflow for writing SikuliX visual automation scripts; aiming to allow the key functionalities of the Sikuli IDE within VS Code/VSCodium. It hooks into your active text window and sidebar, split into region tools, location tools and image tools. Plus a bit extra.
 
 ### Location
 
@@ -26,7 +26,7 @@ This extension provides an inline VS Code/VSCodium workflow for writing SikuliX 
 
 | Feature | Description |
 |---------|-------------|
-| **Capture** | Take an on-screen snapshot. The tool looks backward on your current line for a variable assignment (e.g. `target_img =`) and titles the file dynamically (`scriptName_target_login.png`) before inserting the string filename at the cursor. If no variable is found, it falls back to a Unix timestamp for the image name. |
+| **Capture** | Take an on-screen snapshot. The tool looks backward on your current line for a variable assignment (e.g. `target_img =`) and titles the file dynamically (`scriptName_target_img.png`) before inserting the string filename at the cursor. If no variable is found, it falls back to a Unix timestamp for the image name. |
 | **Offset** | Parses an existing image reference and offset from your active code line, launching an interactive crosshair over the asset to calculate mouse `[dx, dy]` targets. Confirming a point updates your line configuration in-place. |
 | **Match Preview** | Scans your display using OpenCV to visually preview template matching performance using the asset path and similarity float parsed directly from your active text line, overwriting the code with your tuned value on exit. Every hit is boxed and labelled with its true score; the strongest hit is boxed in green (though this is not guaranteed to be the one Sikuli returns, this feature is more for tuning similarities in development). |
 
@@ -36,9 +36,9 @@ This extension provides an inline VS Code/VSCodium workflow for writing SikuliX 
 |---------|-------------|
 | **Run** | A ▶ button in the editor title bar, and a row in the sidebar, hands the enclosing `.sikuli` bundle to SikuliX and streams its output into the **SikuliVS** output channel as it arrives. While a script runs the button becomes ⏹, which kills the JVM; SikuliX also registers its own **Alt+Shift+C** abort hotkey, which is the one that still reaches you once a script has taken over the mouse. |
 | **Errors** | A failed run is parsed back out of SikuliX's output. The reported line is underlined in the editor with the exception and its cause and listed in the Problems panel. |
-| **Debug** | A 🐞 button beside ▶ runs the same script under a debugger: breakpoints, conditional breakpoints, step in/over/out, the call stack, and live variables. See below. |
+| **Debug** | A debug button within ▶ runs the same script under a debugger, with breakpoints, stepping, live variables and a filmstrip of the screen. See below. |
 
-The log itself lands in the **SikuliVS** channel of the OUTPUT panel — pick it from the
+The log itself lands in the **SikuliVS** channel of the OUTPUT panel; pick it from the
 dropdown, which defaults to something else such as Tasks. It is not the Terminal, since
 java is spawned directly rather than through a shell.
 
@@ -53,38 +53,46 @@ Not every logging call is visible by default:
 
 `Debug.log` is gated on SikuliX's `Settings.DebugLogs`, which starts out `false` and is only
 enabled once a debug level is set. `Debug.user` is gated on `Settings.UserLogs`, which
-starts out `true` — so **`Debug.user` is the one to reach for** when logging from a script.
+starts out `true`, so **`Debug.user` is the one to reach for** when logging from a script.
 
 ### Debugging
 
-Set a breakpoint in the gutter and press the 🐞 button, or F5. The script runs under
-SikuliX exactly as it otherwise would — same jar, same bundle, same images — with a
-tracer attached to it.
+Set a breakpoint in the gutter and press the debug button, or F5. The script runs under
+SikuliX exactly as it otherwise would, with the same jar, the same bundle and the same
+images, and a tracer attached to it. SikuliX's **Alt+Shift+C** abort still works.
 
 | Feature | Notes |
 |---|---|
-| **Breakpoints** | Hit on any line of the script or of a `.py` beside it. A breakpoint on a blank line or a comment moves to the next line that carries code, since those never execute. |
-| **Conditional breakpoints** | The condition is evaluated in the frame that is about to run. A condition that itself fails stops the script rather than silently passing. |
-| **Stepping** | Step in, over and out, through the script's own functions. Stepping never descends into SikuliX's library: `wait`, `click` and `find` run to completion as one step. |
-| **Variables** | Locals and the script's own module-level names. SikuliX's own hundreds of exported names are filtered out. Dicts, lists and objects expand. |
-| **SikuliX objects** | A `Region`, `Match`, `Location`, `Screen` or `Pattern` shows a fixed set of fields — `x`, `y`, `w`, `h`, `score` and so on. Deliberately fixed: some of the properties Jython exposes on these, `Region.image` among them, **take a screenshot when read**, and a variables pane must never do that on its own. |
-| **Watch and hover** | Any expression is evaluated in the selected frame, including calls into SikuliX. Evaluating `reg.find("x.png")` really does search the screen. |
-| **Exceptions** | Enable *Raised exceptions* in the BREAKPOINTS pane to stop where an exception is thrown, `FindFailed` included, with the stack still intact. |
-| **Pause** | The pause button stops the script at the next line of your code. It cannot interrupt a `wait()` that is already in progress. |
+| **Breakpoints** | Hit on any line of the script, or of a `.py` beside it, with conditions and hit counts. One set on a blank line or a comment moves to the next line that carries code, since those never execute. |
+| **Stepping** | In, over and out through the script's own functions. Stepping never descends into SikuliX's library, so `wait`, `click` and `find` each run to completion as one step. |
+| **Variables** | Locals and the script's own module-level names; SikuliX's hundreds of exported names are filtered out. A `Region`, `Match`, `Location`, `Screen` or `Pattern` shows a fixed set of fields. That list is deliberately fixed: some of the properties Jython exposes on these, `Region.image` among them, **take a screenshot when read**. |
+| **Watch and hover** | Evaluated in the selected frame, including calls into SikuliX. Evaluating `reg.find("x.png")` really does search the screen. |
+| **Exceptions** | The script suspends before it dies, so the failure can still be inspected. *Raised exceptions* in the BREAKPOINTS pane stops on every throw instead. |
+| **Variable actions** | Right-click a `Region` or `Match` while stopped: **Highlight on screen** outlines it for two seconds, **Copy as Region(...)** puts its bounds on the clipboard. |
+| **Console** | **SikuliVS: Interactive Console** opens a SikuliX interpreter with no script to write first. It stops on the first line of a throwaway stub, so the Debug Console sits in a fully initialised namespace with images resolving against the bundle you had open. |
 
-How it works: SikuliX is pointed at a generated launcher in a temp folder instead of the
-script. The launcher imports the agent in `pysrc/sikulivs_debug.py`, which installs
-`sys.settrace` and then runs the real script in the interpreter namespace SikuliX
-prepared — so the script sees the usual header, bundle path and `sys.argv`. The agent
-talks to the extension over a loopback socket. SikuliX's own abort tracer is chained
-rather than replaced, so **Alt+Shift+C** still works while debugging.
+Only the main script thread is traced, and tracing costs time per line. Image searching
+dominates a typical script so this is rarely noticeable, but a tight pure-Python loop runs
+slower under the debugger. **Pause** stops at the next line of your code; it cannot
+interrupt a `wait()` that is already running.
 
-Two things follow from running on Jython 2.7 rather than CPython:
+### The debug panel
 
-- Only the main script thread is traced. A thread the script starts itself runs without
-  breakpoints.
-- Tracing costs time per line of script. Image searching dominates a typical script, so
-  this is rarely noticeable, but a tight pure-Python loop runs slower under the debugger.
+The screen is photographed after every line that did something, and again whenever the
+script stops, so the filmstrip reads as a recording of the run rather than a row of
+near-identical screenshots. Lines that only move numbers around return in microseconds and
+are skipped. Captures are taken before the editor is told about a stop, so they show the
+script's screen rather than the editor, and they live in a temp folder that is cleared
+when the next run starts.
+
+When a script stops on a `FindFailed`, the panel re-runs that search at a similarity of
+0.05, both inside the region the script actually searched and across the whole screen:
+
+> Inside the region searched, the closest was **0.22**, needed **0.70**.
+> Best match on screen scored **1.00** at (0, 0), outside the region searched.
+
+Both are drawn on the screenshot, dashed blue for where the script looked and solid for
+where the image really is. Seeing the two boxes apart is usually the whole explanation.
 
 ## Differences from the Sikuli IDE / Quality of Life Features
 
@@ -130,9 +138,10 @@ Use the **API** jar (`sikulixapi-<version>.jar`).
 |---|---|---|
 | `sikuliVS.jarPath` | *(empty)* | Absolute path to the jar. When empty, a `sikulix*.jar` sitting in a workspace root is used; failing that you are prompted once and the choice is saved. |
 | `sikuliVS.javaPath` | *(empty)* | Java runtime used to launch SikuliX. When empty, one is discovered (see below); failing that you are prompted once and the choice is saved. |
-| `sikuliVS.pythonPath` | *(empty)* | Interpreter for the visual tools. When empty, a `.venv` beside the extension is tried, then one in a workspace root, then `python3` on `PATH` — the first that can import `cv2`, `numpy`, `PIL`, `tkinter` and `dbus_fast` wins. A packaged install has no bundled virtualenv, so this usually needs setting. |
+| `sikuliVS.pythonPath` | *(empty)* | Interpreter for the visual tools. When empty, a `.venv` beside the extension is tried, then one in a workspace root, then `python3` on `PATH`; the first that can import `cv2`, `numpy`, `PIL`, `tkinter` and `dbus_fast` wins. A packaged install has no bundled virtualenv, so this usually needs setting. |
 | `sikuliVS.debugLevel` | `0` | SikuliX's `-d` level. `0` omits the option; `3` logs everything, including where startup fails. |
 | `sikuliVS.jvmArgs` | `[]` | Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED`. |
+| `sikuliVS.debug.captureMode` | `actions` | When a debugged script has its screen photographed. `actions` after every line that did something and at every stop; `stops` only when it stops; `off` never, removing the small pause each capture adds. |
 
 ### Java has to be headful
 
@@ -155,8 +164,8 @@ Currently does not replace all Sikuli IDE functions.
 
 - **Environment:** Only tested on Fedora 44 KDE Plasma. Running scripts does not work on
   Wayland yet; it was verified against a real X server in an Ubuntu container.
-- **Debugging:** Breakpoints, stepping and variable inspection work; setting a variable's
-  value from the pane, multiple threads, and a REPL against a stopped script do not.
+- **Debugging:** Setting a variable's value from the VARIABLES pane is not supported;
+  Jython offers no way to write back into a function's locals.
 
 ## Known Bugs
 
@@ -169,13 +178,13 @@ visual tools comes from.
 
 ### As a packaged extension
 
-*Not published yet — this is how it will work.* Install the `.vsix` in VSCodium, then
+*Not published yet; this is how it will work.* Install the `.vsix` in VSCodium, then
 provide the two things the extension deliberately does not bundle:
 
 1. **A SikuliX jar.** Download `sikulixapi-<version>-<platform>.jar` and either drop it in
    your workspace root or set `sikuliVS.jarPath`.
 2. **A Python environment for the visual tools.** The `.vsix` ships the sidecar scripts but
-   no virtualenv — one would be hundreds of megabytes of platform-specific binaries. Build
+   no virtualenv, which would be hundreds of megabytes of platform-specific binaries. Build
    one anywhere and point `sikuliVS.pythonPath` at its interpreter:
 
    ```bash
@@ -215,7 +224,8 @@ Development Host window, and work on your automation scripts inside that second 
 Both suites run from the terminal, no extension host required.
 
 ```bash
-npm run test:unit      # parsing, script targets, SikuliX error output, command line, debug launcher
+npm run test:unit      # parsing, script targets, SikuliX error output, command line,
+                       # debug launcher, capture lifecycle
 npm run test:python    # OpenCV template matching engine
 ```
 

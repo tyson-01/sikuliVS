@@ -13,7 +13,9 @@ from __future__ import with_statement
 
 import os
 import sys
+import time
 import json
+import shutil
 import socket
 import threading
 import traceback
@@ -38,6 +40,27 @@ _SIKULI_TYPES = [
 
 MAX_CHILDREN = 500
 
+# Stops worth a screenshot. A step is deliberately absent: stepping a loop would
+# fill the filmstrip with near-identical frames and put a capture on the critical
+# path of every keystroke.
+CAPTURE_REASONS = (BREAKPOINT, EXCEPTION, PAUSE, ENTRY)
+
+THUMBNAIL_WIDTH = 240
+
+# Capture modes, set by the adapter.
+CAPTURE_OFF = 'off'
+CAPTURE_STOPS = 'stops'
+CAPTURE_ACTIONS = 'actions'
+
+# A line that took at least this long did something: a find, a click, a wait.
+# Assignments and arithmetic return in microseconds, so this separates the lines
+# worth photographing from the ones that only move numbers around.
+ACTION_SECONDS = 0.12
+
+# Similarity used when re-running a failed search. Low enough that anything
+# recognisable comes back with a score to compare against what was asked for.
+DIAGNOSE_SIMILARITY = 0.05
+
 
 class AgentError(Exception):
     """A failure worth reporting as a plain message rather than a traceback."""
@@ -49,12 +72,12 @@ STEP_OVER = 2
 STEP_OUT = 3
 
 
-def launch(port, script, bundle, roots, stop_on_entry, script_globals):
+def launch(port, script, bundle, roots, stop_on_entry, capture_dir, script_globals):
     """
     Runs `script` under the debugger. Returns the exit code the runner should
     report; raises whatever the script raised so SikuliX still reports it.
     """
-    agent = _Agent(port, script, roots)
+    agent = _Agent(port, script, roots, capture_dir)
     agent.connect()
     try:
         agent.run(script, bundle, stop_on_entry, script_globals)
@@ -63,10 +86,14 @@ def launch(port, script, bundle, roots, stop_on_entry, script_globals):
 
 
 class _Agent(object):
-    def __init__(self, port, script, roots):
+    def __init__(self, port, script, roots, capture_dir):
         self.port = port
         self.script = _norm(script)
         self.roots = [_norm(root) for root in roots]
+        self.capture_dir = capture_dir
+        self.capture_mode = CAPTURE_STOPS
+        self.frame_count = 0
+        self.last_line = None
 
         self.sock = None
         self.send_lock = threading.Lock()
@@ -83,6 +110,7 @@ class _Agent(object):
         self.step_depth = 0
         self.depth = 0
         self.stop_on_exception = False
+        self.stop_on_uncaught = True
         self.last_exception = None
         self.entry_pending = False
 
@@ -173,14 +201,26 @@ class _Agent(object):
 
     def _cmd_setBreakpoints(self, request):
         path = _norm(request['file'])
+        existing = self.breakpoints.get(path, {})
         lines = {}
+
         for entry in request.get('breakpoints', []):
-            lines[int(entry['line'])] = entry.get('condition') or None
+            line = int(entry['line'])
+            previous = existing.get(line)
+            lines[line] = {
+                'condition': entry.get('condition') or None,
+                'hitCondition': entry.get('hitCondition') or None,
+                # Keep the count across an edit, so re-saving a file mid-run
+                # does not restart a hit condition that was part way there.
+                'hits': previous['hits'] if previous else 0
+            }
+
         self.breakpoints[path] = lines
         return {'lines': sorted(lines.keys())}
 
     def _cmd_setExceptionBreakpoints(self, request):
         self.stop_on_exception = bool(request.get('raised'))
+        self.stop_on_uncaught = bool(request.get('uncaught', True))
         return {}
 
     def _cmd_continue(self, _request):
@@ -239,6 +279,9 @@ class _Agent(object):
     def _scope(self, name, names):
         return {'name': name, 'ref': self._handle(_Scope(names)), 'expensive': False}
 
+    def _member_path(self, path, accessor):
+        return (path + accessor) if path else ''
+
     def _script_names(self, namespace):
         return dict(
             (name, value) for name, value in namespace.items()
@@ -246,18 +289,14 @@ class _Agent(object):
         )
 
     def _cmd_variables(self, request):
-        target = self.variables.get(request['ref'])
-        if target is None:
+        entry = self.variables.get(request['ref'])
+        if entry is None:
             return {'variables': []}
-        return {'variables': self._children(target)}
+        target, path = entry
+        return {'variables': self._children(target, path)}
 
     def _cmd_evaluate(self, request):
-        frame = self.frames.get(request.get('frameId'))
-        if frame is None:
-            frame = self.frames.get(self.frame_order[0]) if self.frame_order else None
-        if frame is None:
-            raise AgentError('The script is not suspended.')
-
+        frame = self._current_frame(request.get('frameId'))
         expression = request['expression']
         try:
             value = eval(expression, frame.f_globals, frame.f_locals)
@@ -273,9 +312,151 @@ class _Agent(object):
             raise AgentError(_current_exception_text())
         return self._describe('', value)
 
+    def _cmd_setCaptureMode(self, request):
+        self.capture_mode = request.get('mode') or CAPTURE_STOPS
+        return {}
+
+    def _cmd_capture(self, _request):
+        """An on-demand frame, for the panel's capture button."""
+        frame = self._capture_frame('manual')
+        if frame is None:
+            raise AgentError('The screen could not be captured.')
+        return frame
+
+    def _cmd_highlight(self, request):
+        """Outlines a Region or Match variable on the real screen."""
+        frame = self._current_frame(request.get('frameId'))
+        target = eval(request['expression'], frame.f_globals, frame.f_locals)
+
+        if not hasattr(target, 'highlight'):
+            raise AgentError('%s cannot be highlighted.' % _type_name(target))
+
+        seconds = float(request.get('seconds', 2))
+        worker = threading.Thread(target=_highlight, args=(target, seconds))
+        worker.setDaemon(True)
+        worker.start()
+        return {}
+
+    def _cmd_diagnose(self, request):
+        """
+        Answers why a search failed, by re-running it at a threshold low enough
+        that anything comparable scores.
+
+        Two searches, because they answer different questions: inside the region
+        the script actually looked at ("was it there at all, and how close?"),
+        and across the whole screen ("is it somewhere else entirely?"). The
+        second is the common answer, and reporting only that one is misleading -
+        it says 1.00 for an image the script could never have seen.
+
+        Coordinates are relative to the screenshot throughout.
+        """
+        image = request['image']
+        screenshot = request['screenshot']
+        region = request.get('region')
+
+        # Let SikuliX resolve the name, exactly as the failed search did, so a
+        # bare "button.png" finds the same file through the bundle path.
+        resolved = self._resolve_image(image)
+
+        result = {
+            'imagePath': resolved,
+            'imageFound': bool(resolved) and os.path.exists(resolved),
+            'overall': self._best_match(screenshot, image),
+            'inRegion': None,
+            'minSimilarity': self._min_similarity()
+        }
+
+        if region:
+            cropped = self._crop(screenshot, region)
+            if cropped:
+                path, origin = cropped
+                try:
+                    found = self._best_match(path, image)
+                finally:
+                    try:
+                        os.remove(path)
+                    except OSError:
+                        pass
+                if found:
+                    # Back into screenshot coordinates, so the panel can draw it.
+                    found['rect']['x'] += origin[0]
+                    found['rect']['y'] += origin[1]
+                result['inRegion'] = found
+
+        return result
+
+    def _resolve_image(self, name):
+        try:
+            return self.script_globals['Pattern'](name).getFilename()
+        except Exception:
+            return name
+
+    def _best_match(self, haystack, needle):
+        """The closest thing to `needle` in `haystack`, however poor."""
+        finder = self.script_globals['Finder'](haystack)
+        pattern = self.script_globals['Pattern'](needle)
+
+        try:
+            finder.find(pattern.similar(DIAGNOSE_SIMILARITY))
+            if not finder.hasNext():
+                return None
+
+            match = finder.next()
+            return {
+                'score': match.getScore(),
+                'rect': {
+                    'x': match.getX(), 'y': match.getY(),
+                    'w': match.getW(), 'h': match.getH()
+                }
+            }
+        finally:
+            try:
+                finder.destroy()
+            except Exception:
+                pass
+
+    def _crop(self, screenshot, region):
+        """
+        Writes the part of the screenshot the script was searching to its own
+        file, so it can be searched in isolation. Returns the path and where the
+        crop starts, or None if the region does not overlap the screenshot.
+        """
+        try:
+            from java.io import File
+            from javax.imageio import ImageIO
+
+            full = ImageIO.read(File(screenshot))
+            x = max(0, int(region['x']))
+            y = max(0, int(region['y']))
+            w = min(int(region['w']), full.getWidth() - x)
+            h = min(int(region['h']), full.getHeight() - y)
+            if w <= 0 or h <= 0:
+                return None
+
+            path = os.path.join(self.capture_dir or os.path.dirname(screenshot), '_search-area.png')
+            ImageIO.write(full.getSubimage(x, y, w, h), 'png', File(path))
+            return (path, (x, y))
+        except Exception:
+            return None
+
+    def _min_similarity(self):
+        """SikuliX's own default threshold, for when the script did not set one."""
+        try:
+            return self.script_globals['Settings'].MinSimilarity
+        except Exception:
+            return 0.7
+
     def _cmd_start(self, _request):
         self.started.set()
         return {}
+
+    def _current_frame(self, frame_id):
+        frame = self.frames.get(frame_id)
+        if frame is None and self.frame_order:
+            frame = self.frames.get(self.frame_order[0])
+        if frame is None:
+            raise AgentError('The script is not suspended.')
+        return frame
 
     def _cmd_disconnect(self, _request):
         self.alive = False
@@ -289,16 +470,22 @@ class _Agent(object):
 
     # -- variables ---------------------------------------------------------
 
-    def _handle(self, obj):
+    def _handle(self, obj, path=''):
         handle = self.next_handle
         self.next_handle += 1
-        self.variables[handle] = obj
+        self.variables[handle] = (obj, path)
         return handle
 
-    def _describe(self, name, value):
-        described = {'name': name, 'value': _repr(value), 'type': _type_name(value), 'ref': 0}
+    def _describe(self, name, value, path=''):
+        described = {
+            'name': name,
+            'value': _repr(value),
+            'type': _type_name(value),
+            'ref': 0,
+            'path': path
+        }
         if self._expandable(value):
-            described['ref'] = self._handle(value)
+            described['ref'] = self._handle(value, path)
         return described
 
     def _expandable(self, value):
@@ -324,17 +511,21 @@ class _Agent(object):
                 continue    # Not a class in this namespace.
         return None
 
-    def _children(self, target):
+    def _children(self, target, path=''):
         if isinstance(target, _Scope):
             pairs = sorted(target.names.items())
-            return [self._describe(name, value) for name, value in pairs[:MAX_CHILDREN]]
+            return [self._describe(name, value, name)
+                    for name, value in pairs[:MAX_CHILDREN]]
 
         if isinstance(target, dict):
             pairs = sorted(target.items(), key=lambda pair: _repr(pair[0]))
-            return [self._describe(_repr(key), value) for key, value in pairs[:MAX_CHILDREN]]
+            return [self._describe(_repr(key), value,
+                                   self._member_path(path, '[%s]' % _repr(key)))
+                    for key, value in pairs[:MAX_CHILDREN]]
 
         if isinstance(target, (list, tuple)):
-            return [self._describe('[%d]' % index, value)
+            return [self._describe('[%d]' % index, value,
+                                   self._member_path(path, '[%d]' % index))
                     for index, value in enumerate(target[:MAX_CHILDREN])]
 
         if isinstance(target, (set, frozenset)):
@@ -343,26 +534,80 @@ class _Agent(object):
 
         members = self._sikuli_members(target)
         if members is not None:
-            return self._member_children(target, members)
+            return self._member_children(target, members, path)
 
         attributes = getattr(target, '__dict__', {})
-        return [self._describe(name, value)
+        return [self._describe(name, value, self._member_path(path, '.' + name))
                 for name, value in sorted(attributes.items())[:MAX_CHILDREN]]
 
-    def _member_children(self, target, members):
+    def _member_children(self, target, members, path=''):
         children = []
         for member in members:
             try:
                 if member.endswith('()'):
                     value = getattr(target, member[:-2])()
                     name = member[:-2]
+                    accessor = '.' + name + '()'
                 else:
                     value = getattr(target, member)
                     name = member
+                    accessor = '.' + name
             except Exception:
                 continue    # Not on this SikuliX version, or not readable here.
-            children.append(self._describe(name, value))
+            children.append(self._describe(name, value, self._member_path(path, accessor)))
         return children
+
+    # -- capture -----------------------------------------------------------
+
+    def _capture_frame(self, reason):
+        """
+        Writes a PNG of the screen plus a thumbnail, and describes where it came
+        from so the panel can place overlays in screen coordinates.
+
+        Never raises: a debugger that cannot take a screenshot is still a working
+        debugger, and this runs on the path to every stop.
+        """
+        if not self.capture_dir:
+            return None
+
+        try:
+            screen = self.script_globals['Screen']()
+            image = screen.capture()
+
+            self.frame_count += 1
+            name = 'frame-%03d' % self.frame_count
+            path = os.path.join(self.capture_dir, name + '.png')
+
+            # Let SikuliX write into its own temp area and copy the bytes out,
+            # rather than handing it the capture folder. A folder SikuliX has
+            # written into does not reliably survive its shutdown, and these
+            # frames have to outlive the run that produced them.
+            written = image.getFile()
+            shutil.copyfile(written, path)
+            try:
+                os.remove(written)
+            except OSError:
+                pass    # SikuliX cleans its own temp area anyway.
+
+            thumbnail = os.path.join(self.capture_dir, name + '-thumb.png')
+            if not _write_thumbnail(path, thumbnail):
+                thumbnail = None
+
+            return {
+                'index': self.frame_count,
+                'reason': reason,
+                'path': path,
+                'thumbnail': thumbnail,
+                # Screen origin and size, so a Region's absolute coordinates can
+                # be mapped onto pixels of this image.
+                'bounds': {
+                    'x': screen.getX(), 'y': screen.getY(),
+                    'w': screen.getW(), 'h': screen.getH()
+                }
+            }
+        except Exception:
+            self.send({'event': 'agentError', 'text': traceback.format_exc()})
+            return None
 
     # -- tracing -----------------------------------------------------------
 
@@ -395,6 +640,11 @@ class _Agent(object):
         except SystemExit:
             raise
         except:
+            # Stop before unwinding. Without this the most interesting moment in
+            # a run, the failure, is the one moment that cannot be inspected,
+            # because reporting it also ends the JVM that holds the answers.
+            self._suspend_on_failure()
+
             # SikuliX blames the generated launcher for the failure, since that
             # is the file it was pointed at. Say where it really happened.
             self._report_failure()
@@ -402,6 +652,25 @@ class _Agent(object):
         finally:
             sys.settrace(self.prev_trace)
             self.send({'event': 'exited'})
+
+    def _suspend_on_failure(self):
+        """
+        Suspends on the deepest frame of the user's own code in the traceback.
+        Those frames are still alive while the traceback holds them, so locals
+        and the screen can both still be inspected.
+        """
+        if not self.stop_on_uncaught or not self.alive:
+            return
+
+        tb = sys.exc_info()[2]
+        failing = None
+        while tb is not None:
+            if self._is_user(tb.tb_frame.f_code.co_filename):
+                failing = tb.tb_frame
+            tb = tb.tb_next
+
+        if failing is not None:
+            self._suspend(failing, EXCEPTION, _current_exception_text())
 
     def _report_failure(self):
         value, tb = sys.exc_info()[1:]
@@ -468,14 +737,15 @@ class _Agent(object):
         if event != 'line':
             return
 
+        if self.capture_mode == CAPTURE_ACTIONS:
+            self._note_line(frame)
+
         if self.pause_requested:
             self._suspend(frame, PAUSE)
             return
 
-        condition = self._breakpoint_at(frame)
-        if condition is not None and (
-            condition is True or self._condition_holds(frame, condition)
-        ):
+        breakpoint = self._breakpoint_at(frame)
+        if breakpoint is not None and self._breakpoint_fires(frame, breakpoint):
             self._suspend(frame, BREAKPOINT)
             return
 
@@ -486,11 +756,47 @@ class _Agent(object):
                 reason = ENTRY
             self._suspend(frame, reason)
 
+    def _note_line(self, frame):
+        """
+        Photographs the screen after any line that took long enough to have done
+        something on it, which is what turns the filmstrip into a recording of
+        the run rather than a record of where it happened to stop.
+        """
+        previous = self.last_line
+        if previous is not None:
+            elapsed = time.time() - previous[2]
+            if elapsed >= ACTION_SECONDS:
+                captured = self._capture_frame('action')
+                if captured:
+                    self.send({
+                        'event': 'frame',
+                        'capture': captured,
+                        'file': previous[0],
+                        'line': previous[1],
+                        'elapsed': round(elapsed, 2)
+                    })
+
+        # Timed after any capture, so the cost of photographing one line is not
+        # charged to the next one.
+        self.last_line = (frame.f_code.co_filename, frame.f_lineno, time.time())
+
     def _breakpoint_at(self, frame):
         lines = self.breakpoints.get(_norm(frame.f_code.co_filename))
-        if not lines or frame.f_lineno not in lines:
+        if not lines:
             return None
-        return lines[frame.f_lineno] or True
+        return lines.get(frame.f_lineno)
+
+    def _breakpoint_fires(self, frame, breakpoint):
+        """
+        Whether this hit counts. A hit condition is measured against the number
+        of times the condition itself held, not the times the line ran.
+        """
+        condition = breakpoint['condition']
+        if condition and not self._condition_holds(frame, condition):
+            return False
+
+        breakpoint['hits'] += 1
+        return _hit_condition_met(breakpoint['hitCondition'], breakpoint['hits'])
 
     def _condition_holds(self, frame, condition):
         try:
@@ -535,6 +841,13 @@ class _Agent(object):
             frame_id += 1
             walked = walked.f_back
 
+        # Capture before the stop is announced. The moment the editor is told,
+        # it takes focus and paints itself over whatever the script was working
+        # on, so a screenshot taken any later shows the editor instead.
+        captured = None
+        if self.capture_mode != CAPTURE_OFF and reason in CAPTURE_REASONS:
+            captured = self._capture_frame(reason)
+
         self.suspended = True
         self.resume.clear()
         self.send({
@@ -542,13 +855,16 @@ class _Agent(object):
             'reason': reason,
             'text': text,
             'line': frame.f_lineno,
-            'file': frame.f_code.co_filename
+            'file': frame.f_code.co_filename,
+            'capture': captured
         })
 
         while not self.resume.is_set() and self.alive:
             self.resume.wait(0.2)
 
         self.suspended = False
+        # However long the stop lasted, it is not the next line's doing.
+        self.last_line = None
         self.send({'event': 'continued'})
 
 
@@ -610,6 +926,67 @@ def _type_name(value):
         return type(value).__name__
     except Exception:
         return ''
+
+
+def _write_thumbnail(source, destination):
+    """
+    Scales a captured frame down for the filmstrip, using the JDK's own imaging
+    so nothing has to be added to the extension's dependencies.
+    """
+    try:
+        from java.io import File
+        from java.awt import RenderingHints
+        from java.awt.image import BufferedImage
+        from javax.imageio import ImageIO
+
+        full = ImageIO.read(File(source))
+        width = min(THUMBNAIL_WIDTH, full.getWidth())
+        height = max(1, full.getHeight() * width // full.getWidth())
+
+        thumbnail = BufferedImage(width, height, BufferedImage.TYPE_INT_RGB)
+        graphics = thumbnail.createGraphics()
+        graphics.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
+                                  RenderingHints.VALUE_INTERPOLATION_BILINEAR)
+        graphics.drawImage(full, 0, 0, width, height, None)
+        graphics.dispose()
+
+        ImageIO.write(thumbnail, 'png', File(destination))
+        return True
+    except Exception:
+        return False
+
+
+def _highlight(target, seconds):
+    try:
+        target.highlight(seconds)
+    except Exception:
+        pass
+
+
+def _hit_condition_met(expression, hits):
+    """
+    VS Code's hit conditions: a bare count, a comparison such as `>=5`, or `%3`
+    for every third time. An unparseable one fires every time rather than never,
+    so a typo cannot silently disable a breakpoint.
+    """
+    if not expression:
+        return True
+
+    text = expression.strip()
+    try:
+        for prefix, test in (
+            ('>=', lambda n: hits >= n),
+            ('<=', lambda n: hits <= n),
+            ('==', lambda n: hits == n),
+            ('>', lambda n: hits > n),
+            ('<', lambda n: hits < n),
+            ('%', lambda n: n > 0 and hits % n == 0),
+        ):
+            if text.startswith(prefix):
+                return test(int(text[len(prefix):].strip()))
+        return hits == int(text)
+    except ValueError:
+        return True
 
 
 def _current_exception_text():

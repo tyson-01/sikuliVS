@@ -7,19 +7,21 @@ const SPEC = {
     script: '/home/t/proj/login.sikuli/login.py',
     bundle: '/home/t/proj/login.sikuli',
     roots: ['/home/t/proj'],
-    stopOnEntry: false
+    stopOnEntry: false,
+    captureDir: '/tmp/svs-captures-xyz'
 };
 
 describe('Debug launcher script', () => {
     test('hands the agent the port, script, bundle and roots', () => {
-        const source = launcherSource(SPEC, '/tmp/sikulivs-debug-abc');
+        const source = launcherSource(SPEC, '/tmp/svs-launch-abc');
 
-        assert.match(source, /sys\.path\.insert\(0, u"\/tmp\/sikulivs-debug-abc"\)/);
+        assert.match(source, /sys\.path\.insert\(0, u"\/tmp\/svs-launch-abc"\)/);
         assert.match(source, /import sikulivs_debug/);
         assert.match(source, /^ {4}41234,$/m);
         assert.match(source, /^ {4}u"\/home\/t\/proj\/login\.sikuli\/login\.py",$/m);
         assert.match(source, /^ {4}u"\/home\/t\/proj\/login\.sikuli",$/m);
         assert.match(source, /^ {4}\[u"\/home\/t\/proj"\],$/m);
+        assert.match(source, /^ {4}u"\/tmp\/svs-captures-xyz"\)?,?$/m);
     });
 
     test('runs the script in the interpreter namespace SikuliX prepared', () => {
