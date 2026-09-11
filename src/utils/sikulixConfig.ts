@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFile } from 'child_process';
 import { log } from './output';
+import { headfulMarker, javaBinary, jvmRoots } from './platform';
 
 export interface SikulixEnvironment {
     javaPath: string;
@@ -22,12 +23,12 @@ const JAVA_HOME_SETTING = /^\s*java\.home\s*=\s*(.+?)\s*$/m;
 const JAVA_VERSION_SETTING = /^\s*java\.version\s*=\s*(.+?)\s*$/m;
 const RELEASE_VERSION = /^JAVA_VERSION="?([^"\n]+)"?$/m;
 
-// Present only in a headful JRE. Without it SikuliX cannot open a screen, and it fails
-// silently: the JVM exits 1 having printed nothing unless -d 3 is in play.
-const HEADFUL_MARKER = 'libawt_xawt.so';
+// The library whose absence means a runtime cannot open a screen. See platform.ts.
+const MARKER = headfulMarker();
 
-// Where distributions install JVMs. Checked only when nothing is configured.
-const JVM_ROOTS = ['/usr/lib/jvm', '/usr/java', '/opt/java'];
+// macOS keeps its JDKs behind a tool rather than at a predictable path, and it honours
+// the runtime the user selected, so it is asked before anything is scanned.
+const MAC_JAVA_HOME = '/usr/libexec/java_home';
 
 // SikuliX 2.0.5 predates the module-system tightening; on 24+ it warns that its native
 // access will stop working, so an older runtime is preferred when there is a choice.
@@ -66,11 +67,14 @@ let waylandWarningAccepted = false;
 /**
  * Warns once per session before running on Wayland.
  *
- * SikuliX reaches the screen through `java.awt.Robot`. On Wayland that goes to the
- * desktop portal, which asks permission per capture and does not reuse the grant, so a
- * trivial script can raise hundreds of dialogs. Bypassing the portal is not an
- * alternative: an X11 client under XWayland cannot see the compositor's output and its
- * captures come back blank, which would silently stop every match from ever succeeding.
+ * SikuliX acts on the screen through `java.awt.Robot`, which emulates input through
+ * XTEST. That reaches the XWayland X server only, so events never arrive at a native
+ * Wayland client, clicks do not raise or focus windows, and the pointer does not move.
+ * The JDK has no other route: input emulation on Wayland is unimplemented upstream and
+ * waiting on libei, with no release it is scheduled for. Screen capture does work, via
+ * the desktop portal, so a script will find its image and then act on nothing.
+ *
+ * The visual tools are unaffected, since none of them emulate input.
  */
 export async function confirmDisplayServer(): Promise<boolean> {
     if (waylandWarningAccepted || !isWaylandSession()) {
@@ -78,9 +82,10 @@ export async function confirmDisplayServer(): Promise<boolean> {
     }
 
     const choice = await vscode.window.showWarningMessage(
-        'SikuliVS: This is a Wayland session. SikuliX asks the desktop portal for screen ' +
-        'permission on every capture and never reuses the answer, so even a one-line script ' +
-        'can raise hundreds of prompts. Log in to an X11 session for usable automation.',
+        'SikuliVS: This is a Wayland session, where SikuliX cannot emulate mouse or keyboard ' +
+        'input at all. Searches will succeed and then every click and keystroke will land ' +
+        'nowhere. Each screen capture also asks the desktop portal for permission, so a short ' +
+        'script can raise many prompts. Running scripts needs an X server.',
         { modal: true },
         'Run Anyway'
     );
@@ -91,6 +96,33 @@ export async function confirmDisplayServer(): Promise<boolean> {
 
 function isWaylandSession(): boolean {
     return Boolean(process.env.WAYLAND_DISPLAY) || process.env.XDG_SESSION_TYPE === 'wayland';
+}
+
+// SikuliX publishes two jars. The IDE one bundles its own editor and re-executes java on
+// startup, so JVM options passed on the command line are dropped before a script runs, and
+// nothing the extension sets on the command line survives. The API jar runs in the process
+// it is given.
+const IDE_JAR = /sikulixide/i;
+
+let ideJarWarned = false;
+
+/**
+ * Says so when the configured jar is the IDE build rather than the API one. Warned once per
+ * session and never blocking: it mostly works, so refusing to run would be worse than
+ * saying what is wrong.
+ */
+function warnAboutIdeJar(jarPath: string): void {
+    if (ideJarWarned || !IDE_JAR.test(path.basename(jarPath))) {
+        return;
+    }
+    ideJarWarned = true;
+
+    log(`[run] warning: ${path.basename(jarPath)} is the IDE jar, not the API jar`);
+    void vscode.window.showWarningMessage(
+        `SikuliVS: ${path.basename(jarPath)} is the SikuliX IDE jar. It restarts the Java ` +
+        'runtime on startup, which discards the options this extension sets, including the ' +
+        'display scale fix that keeps coordinates correct. Use sikulixapi-<version>.jar instead.'
+    );
 }
 
 /**
@@ -105,12 +137,14 @@ async function resolveJarPath(config: vscode.WorkspaceConfiguration): Promise<st
             );
             return null;
         }
+        warnAboutIdeJar(configured);
         return configured;
     }
 
     const discovered = findJarInWorkspace();
     if (discovered) {
         log(`[run] using discovered jar: ${discovered}`);
+        warnAboutIdeJar(discovered);
         return discovered;
     }
 
@@ -200,10 +234,10 @@ async function resolveJava(config: vscode.WorkspaceConfiguration): Promise<JavaR
  * JVMs are only scanned when neither of those can open a screen.
  */
 async function findUsableJava(): Promise<JavaRuntime | null> {
-    const javaHome = process.env.JAVA_HOME;
+    const javaHome = process.env.JAVA_HOME ?? await macSelectedJavaHome();
     const preferred = [
-        javaHome ? path.join(javaHome, 'bin', 'java') : null,
-        'java'
+        javaHome ? path.join(javaHome, 'bin', javaBinary()) : null,
+        javaBinary()
     ].filter((candidate): candidate is string => candidate !== null);
 
     for (const candidate of preferred) {
@@ -217,14 +251,32 @@ async function findUsableJava(): Promise<JavaRuntime | null> {
 }
 
 /**
+ * The runtime macOS itself considers current. Nothing elsewhere, and nothing when the
+ * tool is absent or reports no JDK at all.
+ */
+function macSelectedJavaHome(): Promise<string | null> {
+    if (process.platform !== 'darwin' || !fs.existsSync(MAC_JAVA_HOME)) {
+        return Promise.resolve(null);
+    }
+
+    return new Promise((resolve) => {
+        execFile(MAC_JAVA_HOME, (error, stdout) => {
+            const home = stdout.trim();
+            resolve(error || home === '' ? null : home);
+        });
+    });
+}
+
+/**
  * Reads installed JVMs straight off disk — the release file gives the version and the
  * presence of the AWT library gives headfulness, so nothing has to be executed.
  */
 function discoverInstalledJava(): JavaRuntime | null {
     const found: JavaRuntime[] = [];
     const seen = new Set<string>();
+    const { roots, homeSuffix } = jvmRoots();
 
-    for (const root of JVM_ROOTS) {
+    for (const root of roots) {
         let entries: string[];
         try {
             entries = fs.readdirSync(root);
@@ -233,8 +285,8 @@ function discoverInstalledJava(): JavaRuntime | null {
         }
 
         for (const entry of entries) {
-            const home = realPath(path.join(root, entry));
-            const javaPath = path.join(home, 'bin', 'java');
+            const home = realPath(path.join(root, entry, homeSuffix));
+            const javaPath = path.join(home, 'bin', javaBinary());
             if (seen.has(home) || !fs.existsSync(javaPath)) {
                 continue;
             }
@@ -244,7 +296,7 @@ function discoverInstalledJava(): JavaRuntime | null {
                 javaPath,
                 home,
                 version: readReleaseVersion(home),
-                headful: fs.existsSync(path.join(home, 'lib', HEADFUL_MARKER))
+                headful: isHeadful(home)
             });
         }
     }
@@ -282,6 +334,10 @@ function readReleaseVersion(home: string): string {
     }
 }
 
+function isHeadful(home: string): boolean {
+    return fs.existsSync(path.join(home, MARKER.dir, MARKER.file));
+}
+
 function realPath(candidate: string): string {
     try {
         return fs.realpathSync(candidate);
@@ -307,7 +363,7 @@ async function inspectJava(javaPath: string): Promise<JavaRuntime | null> {
         javaPath,
         home,
         version: JAVA_VERSION_SETTING.exec(settings)?.[1] ?? 'unknown',
-        headful: fs.existsSync(path.join(home, 'lib', HEADFUL_MARKER))
+        headful: isHeadful(home)
     };
 }
 
@@ -327,8 +383,8 @@ async function reportHeadless(
     runtime: JavaRuntime
 ): Promise<JavaRuntime | null> {
     const choice = await vscode.window.showErrorMessage(
-        `SikuliVS: The Java runtime at ${runtime.home} is headless (no ${HEADFUL_MARKER}), ` +
-        'so SikuliX cannot access the screen. Install a full JDK, e.g. "java-17-openjdk".',
+        `SikuliVS: The Java runtime at ${runtime.home} is headless (no ${MARKER.file}), so ` +
+        'SikuliX cannot access the screen. A full JDK is needed rather than a headless build.',
         'Select Java...'
     );
 
@@ -351,10 +407,11 @@ async function promptForJava(
  * Falls back to picking the `java` binary by hand, saving it so the prompt is one-time.
  */
 async function pickJava(config: vscode.WorkspaceConfiguration): Promise<JavaRuntime | null> {
+    const start = jvmRoots().roots.find(root => fs.existsSync(root));
     const picked = await vscode.window.showOpenDialog({
         canSelectMany: false,
         openLabel: 'Use this java',
-        defaultUri: vscode.Uri.file(JVM_ROOTS[0])
+        defaultUri: start ? vscode.Uri.file(start) : undefined
     });
     if (!picked || picked.length === 0) {
         return null;
@@ -372,7 +429,7 @@ async function pickJava(config: vscode.WorkspaceConfiguration): Promise<JavaRunt
         // Saving it would only make the next run fail the same way, with the setting to
         // undo first.
         await vscode.window.showErrorMessage(
-            `SikuliVS: ${runtime.home} is headless (no ${HEADFUL_MARKER}) and cannot run SikuliX.`
+            `SikuliVS: ${runtime.home} is headless (no ${MARKER.file}) and cannot run SikuliX.`
         );
         return null;
     }

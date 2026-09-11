@@ -6,6 +6,11 @@ import { registerOffsetCommand } from './commands/offset';
 import { registerMatchCommand } from './commands/match';
 import { registerHighlightCommand } from './commands/highlight';
 import { registerShowLocationCommand } from './commands/showLocation';
+import { registerCompletionCommand } from './commands/completion';
+import { registerSetup } from './setup/setup';
+import { managedInterpreter, managedRoot } from './setup/managedEnvironment';
+import { registerGuiContext } from './bridge/guiBridge';
+import { registerManagedVenv } from './utils/pythonConfig';
 import { registerRunCommands } from './commands/run';
 import { registerDebugging } from './debug/register';
 import { SikuliVSView } from './views/sikuliVSView';
@@ -13,7 +18,7 @@ import { ImageHoverProvider } from './providers/imageHoverProvider';
 import { ImageCodeLensProvider } from './providers/imageCodeLensProvider';
 import { RegionCodeLensProvider } from './providers/regionCodeLensProvider';
 import { LocationCodeLensProvider } from './providers/locationCodeLensProvider';
-import { outputChannel } from './utils/output';
+import { log, outputChannel } from './utils/output';
 import { diagnosticCollection } from './utils/runDiagnostics';
 import { discardPending, sweepStaleTempDirs } from './debug/captures';
 
@@ -26,6 +31,17 @@ const PYTHON_FILE_SELECTOR: vscode.DocumentSelector = { scheme: 'file', language
  */
 export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(outputChannel(), diagnosticCollection());
+
+    // Says which build is actually live and where it keeps what it installs. Installing a
+    // .vsix over the same version number can silently leave the old one in place, and
+    // neither path is guessable from outside, so both are worth one line.
+    log(`[sikulivs] activated ${context.extension.packageJSON.version} from ${context.extensionPath}`);
+    log(`[sikulivs] managed storage: ${managedRoot(context)}`);
+
+    // Everything the extension installed for itself lives under globalStorage, and the
+    // parts of the code that need it cannot reach the context, so it is handed over here.
+    registerGuiContext(context);
+    registerManagedVenv(managedInterpreter(context));
 
     // Debug sessions leave a temp folder behind if the editor is killed mid-run.
     sweepStaleTempDirs();
@@ -46,6 +62,8 @@ function registerCommands(context: vscode.ExtensionContext): void {
     registerHighlightCommand(context);
     registerLocationCommand(context);
     registerShowLocationCommand(context);
+    registerCompletionCommand(context);
+    registerSetup(context);
 }
 
 // Custom UI panels rendered in the sidebar

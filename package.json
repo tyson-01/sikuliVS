@@ -2,7 +2,7 @@
   "name": "sikulivs",
   "displayName": "sikuliVS",
   "description": "sikuliVS adds the sikuliX specific features of the sikuliX IDE into VScode",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "tyson-01",
   "icon": "media/icon.png",
   "engines": {
@@ -76,6 +76,16 @@
         "icon": "$(terminal)"
       },
       {
+        "command": "sikuliVS.setup",
+        "title": "SikuliVS: Set Up",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "sikuliVS.setupCompletion",
+        "title": "SikuliVS: Set Up Script Completion",
+        "icon": "$(symbol-namespace)"
+      },
+      {
         "command": "sikuliVS.debugHighlight",
         "title": "SikuliVS: Highlight on Screen",
         "icon": "$(sparkle)"
@@ -87,7 +97,7 @@
       }
     ],
     "menus": {
-      "editor/title/run": [
+      "editor/title": [
         {
           "command": "sikuliVS.runScript",
           "when": "resourceLangId == python && !sikuliVS.running",
@@ -150,17 +160,17 @@
         "sikuliVS.jarPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Absolute path to `sikulixapi-<version>.jar`. When empty, a `sikulix*.jar` found in a workspace root is used."
+          "markdownDescription": "Absolute path to `sikulixapi-<version>.jar`. The jar is platform specific, so use the one built for this machine, e.g. `sikulixapi-2.0.5-win.jar` on Windows. When empty, a `sikulix*.jar` found in a workspace root is used."
         },
         "sikuliVS.javaPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Java runtime used to launch SikuliX. When empty, `$JAVA_HOME/bin/java` is tried, then `java` on PATH. Must be a headful JRE; a headless one cannot access the screen."
+          "markdownDescription": "Java runtime used to launch SikuliX. When empty, `JAVA_HOME` is tried, then `java` on `PATH`, then the places this platform installs JVMs. Must be a headful JRE; a headless one cannot access the screen."
         },
         "sikuliVS.pythonPath": {
           "type": "string",
           "default": "",
-          "markdownDescription": "Python interpreter for the visual tools (region, location, capture, offset, match). When empty, a `.venv` beside the extension is tried, then one in a workspace root, then `python3` on `PATH`; the first that can import `cv2`, `numpy`, `PIL`, `tkinter` and `dbus_fast` is used. An extension installed from a .vsix has no bundled virtualenv, so this usually needs setting."
+          "markdownDescription": "Python interpreter for the visual tools (region, location, capture, offset, match). Only needed to override the automatic choice: when empty, a `.venv` beside the extension is tried, then the environment **SikuliVS: Set Up** builds, then a `.venv` in a workspace root, then `python3` on `PATH` (`python` on Windows); the first that can import `cv2`, `numpy`, `PIL` and `tkinter` is used. Must be an interpreter itself, not a `.cmd` or `.bat` wrapper."
         },
         "sikuliVS.debugLevel": {
           "type": "number",
@@ -175,7 +185,7 @@
             "type": "string"
           },
           "default": [],
-          "markdownDescription": "Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED` to silence Java 24+ native access warnings. Never added automatically, since older JVMs reject unknown flags."
+          "markdownDescription": "Extra JVM arguments, e.g. `--enable-native-access=ALL-UNNAMED` to silence Java 24+ native access warnings. Options are never added automatically, since older JVMs reject unknown ones. The single exception is `-Dsun.java2d.uiScale=1`, which every JVM accepts and which keeps Java's coordinates in the same pixels the visual tools use on a scaled display; set your own `-Dsun.java2d.uiScale` here to override it."
         },
         "sikuliVS.debug.captureMode": {
           "type": "string",

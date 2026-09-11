@@ -1,8 +1,12 @@
 import argparse
 import sys
 from typing import NoReturn
+from screenshot import enable_dpi_awareness
 
 def main() -> None:
+    # Before any window is opened or any screen is read, so Tk and PIL agree on a pixel.
+    enable_dpi_awareness()
+
     parser = argparse.ArgumentParser(description="SikuliVS GUI Engine")
     parser.add_argument('--action', choices=['region', 'capture', 'offset', 'match', 'highlight', 'location', 'showlocation'], required=True)
     parser.add_argument('--out', type=str, help="Output destination path for file captures.")
@@ -57,6 +61,7 @@ def main() -> None:
             sys.exit(1)
         from gui_selectors.show_location import run_show_location
         run_show_location(args.x, args.y)
+
 
 def validate_required_arg(arg_value: str | list[str] | None, error_message: str) -> None | NoReturn:
     """Safely asserts an argument is present, printing to stderr and exiting on failure."""

@@ -108,7 +108,9 @@ class ScreenMatcher:
         """Filters the precomputed peaks down to non-overlapping hits at `threshold`.
 
         Returns the matches ordered best first, plus the centre of the single strongest
-        one, which is the hit SikuliX itself would act on.
+        one. That is not necessarily the hit SikuliX acts on: it takes the first match it
+        finds at or above the threshold rather than searching on for the highest score,
+        so this view is for tuning a similarity, not for predicting a result.
         """
         # Scores are sorted descending, so hits above the threshold form a prefix
         cutoff = int(np.searchsorted(-self._scores, -threshold, side="right"))

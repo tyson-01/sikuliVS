@@ -20,7 +20,7 @@ ACCENT = "#007acc"
 TEXT = "#ffffff"
 MUTED = "#aaaaaa"
 
-BEST_COLOUR = "#00e05a"   # The hit SikuliX would act on
+BEST_COLOUR = "#00e05a"   # The strongest hit, which is not necessarily SikuliX's
 MATCH_COLOUR = "#ff3333"  # Every other hit above the threshold
 
 # One colour per image in the overlay-all view. Green and red are deliberately absent:
@@ -30,7 +30,6 @@ PALETTE = ["#3aa0ff", "#ffb020", "#c86bff", "#00d0c0", "#ff6fd8", "#ffe14d", "#7
 
 STEP = 0.01
 COARSE_STEP = 0.05
-MIN_LABEL_WIDTH = 26  # Below this on-screen box width, score labels become unreadable
 LEGEND_COLUMNS = 3
 LEGEND_MAX_ROWS = 4
 THUMBNAIL_MAX = (120, 40)
@@ -385,7 +384,7 @@ class MatchPreviewWindow:
                 plural = "" if len(matches) == 1 else "es"
                 self.set_status(
                     f"{len(matches)} match{plural}  ·  best {matches[0]['score']:.3f}"
-                    f"  ·  green box is the match SikuliX would use", "#8fd98f")
+                    f"  ·  green box is the strongest hit, not necessarily SikuliX's", "#8fd98f")
             else:
                 self.set_status("No matches at this similarity — lower the threshold", "#ffcc00")
 
@@ -494,6 +493,7 @@ class MatchPreviewWindow:
                     self._draw_label(draw, f"{m['score']:.2f}", x, y, colour, bounds)
 
     def _draw_single_image(self, draw: ImageDraw.ImageDraw, bounds: tuple[int, int]) -> None:
+        """Every hit is scored here, since tuning a similarity means comparing the numbers."""
         path = self.image_paths[self.view]
         for rank, m in enumerate(self.results.get(path, [])):
             x, y, w, h = self._scaled_box(m)
@@ -501,10 +501,7 @@ class MatchPreviewWindow:
             is_best = rank == 0
             colour = BEST_COLOUR if is_best else MATCH_COLOUR
             draw.rectangle([x, y, x + w, y + h], outline=colour, width=3 if is_best else 2)
-
-            # Tiny boxes cannot carry a legible label; the best hit always gets one
-            if is_best or w >= MIN_LABEL_WIDTH:
-                self._draw_label(draw, f"#{rank + 1}  {m['score']:.2f}", x, y, colour, bounds)
+            self._draw_label(draw, f"#{rank + 1}  {m['score']:.2f}", x, y, colour, bounds)
 
     def _scaled_box(self, match: dict[str, Any]) -> tuple[int, int, int, int]:
         return (
